@@ -1,0 +1,12 @@
+[package]
+name = "rusty-rakoon"
+version = "0.1.0"
+authors = ["Arne Redlich <arne.redlich@googlemail.com>"]
+license = "Apache 2.0"
+
+[dependencies]
+byteorder = "*"
+libc = "*"
+
+[dev-dependencies]
+uuid = { version = "*", features = ["v4"] }

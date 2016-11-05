@@ -214,7 +214,6 @@ mod test {
 
     type ArakoonConnection = Connection<std::net::TcpStream>;
 
-
     impl ArakoonCluster {
         fn new(count : u16) -> ArakoonCluster {
             let tempdir = get_env_or_default("TEMP",
@@ -272,7 +271,7 @@ mod test {
             cluster
         }
 
-        fn write_config_file(&self, node : &ArakoonNode) -> Result<(), std::io::Error> {
+        fn write_config_file(&self, node : &ArakoonNode) -> std::io::Result<()> {
             let f = try!(File::create(node.config_file()));
             let mut w = BufWriter::new(f);
 
@@ -318,7 +317,7 @@ mod test {
             node_configs
         }
 
-        fn connect_to_node(&self, node_config : &NodeConfig) -> Result<ArakoonConnection, Error> {
+        fn connect_to_node(&self, node_config : &NodeConfig) -> Result<ArakoonConnection> {
             match std::net::TcpStream::connect(&node_config.addr as &str) {
                 Ok(stream) => {
                     let mut conn = Connection::new(stream,
@@ -369,7 +368,7 @@ mod test {
                                   req_fn : ReqFn,
                                   rsp_fn : RspFn) -> Ret
         where ReqFn : Fn(&mut ArakoonConnection) -> std::io::Result<()>,
-    RspFn : Fn(&mut ArakoonConnection) -> Result<Ret, Error> {
+    RspFn : Fn(&mut ArakoonConnection) -> Result<Ret> {
         assert!(req_fn(conn).is_ok());
         let rep = rsp_fn(conn);
         assert!(rep.is_ok());
@@ -515,7 +514,7 @@ mod test {
                                  req_fn : ReqFn,
                                  rsp_fn : RspFn) -> bool
         where ReqFn : Fn(&mut ArakoonConnection, &[Action]) -> std::io::Result<()>,
-    RspFn : Fn(&mut ArakoonConnection) -> Result<(), Error> {
+    RspFn : Fn(&mut ArakoonConnection) -> Result<()> {
         assert!(req_fn(conn, acts).is_ok());
         let rep = rsp_fn(conn);
         match rep {

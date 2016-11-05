@@ -15,6 +15,7 @@ extern crate byteorder;
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use std;
+use std::error;
 use std::io::{Read, Write};
 use std::fmt::Debug;
 // use std::net::{SocketAddr, ToSocketAddrs};
@@ -85,6 +86,32 @@ pub enum Error {
     ErrorResponse(ErrorCode, String),
     IoError(std::io::Error)
 }
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f : &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Error::ErrorResponse(ref code, ref msg) => write!(f, "Arakoon error response {:?} : {}", code, msg),
+            Error::IoError(ref err) => write!(f, "I/O error: {}", err),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::ErrorResponse(_, _) => "Arakoon error response",
+            Error::IoError(ref err) => err.description(),
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e : std::io::Error) -> Error {
+        Error::IoError(e)
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Action<'k, 'v> {
@@ -173,7 +200,7 @@ fn send_i64<W: Write>(w : &mut W, num : i64) -> std::io::Result<()> {
     Ok(())
 }
 
-fn recv_i64<R: Read>(r : &mut R) -> Result<i64, Error> {
+fn recv_i64<R: Read>(r : &mut R) -> Result<i64> {
     match r.read_i64::<LittleEndian>() {
         Err(e) => Err(Error::IoError(e)),
         Ok(n) => Ok(n),
@@ -269,14 +296,14 @@ fn send_sequence<W: Write>(w: &mut W, acts : &[Action]) -> std::io::Result<()> {
     send_buf(w, &cur.into_inner())
 }
 
-fn recv_i32<R: Read>(r : &mut R) -> Result<i32, Error> {
+fn recv_i32<R: Read>(r : &mut R) -> Result<i32> {
     match r.read_i32::<LittleEndian>() {
         Err(e) => Err(Error::IoError(e)),
         Ok(n) => Ok(n),
     }
 }
 
-fn recv_bool<R: Read>(r : &mut R) -> Result<bool, Error> {
+fn recv_bool<R: Read>(r : &mut R) -> Result<bool> {
     let mut byte = [ 0u8 ];
     let res = r.read_exact(&mut byte);
     if let Err(e) = res {
@@ -289,7 +316,7 @@ fn recv_bool<R: Read>(r : &mut R) -> Result<bool, Error> {
     }
 }
 
-fn recv_option<R: Read>(r : &mut R) -> Result<Option<Vec<u8>>, Error> {
+fn recv_option<R: Read>(r : &mut R) -> Result<Option<Vec<u8>>> {
     match recv_bool(r) {
         Err(e) => Err(e),
         Ok(false) => Ok(None),
@@ -300,7 +327,7 @@ fn recv_option<R: Read>(r : &mut R) -> Result<Option<Vec<u8>>, Error> {
     }
 }
 
-fn recv_buf<R: Read>(r : &mut R) -> Result<Vec<u8>, Error> {
+fn recv_buf<R: Read>(r : &mut R) -> Result<Vec<u8>> {
     match recv_i32(r) {
         Err(e) => Err(e),
         Ok(len) => {
@@ -313,7 +340,7 @@ fn recv_buf<R: Read>(r : &mut R) -> Result<Vec<u8>, Error> {
     }
 }
 
-fn recv_rsp<R: Read>(r : &mut R) -> Result<(), Error> {
+fn recv_rsp<R: Read>(r : &mut R) -> Result<()> {
     match recv_i32(r) {
         Ok(0) => Ok(()),
         Ok(e) => {
@@ -353,7 +380,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_req(&mut self.sock, Request::WhoMaster)
     }
 
-    pub fn who_master_rsp(&mut self) -> Result<Option<NodeId>, Error> {
+    pub fn who_master_rsp(&mut self) -> Result<Option<NodeId>> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         let maybe_master = try!(recv_option(sock));
@@ -368,7 +395,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, &cid.as_bytes())
     }
 
-    pub fn hello_rsp(&mut self) -> Result<Vec<u8>, Error> {
+    pub fn hello_rsp(&mut self) -> Result<Vec<u8>> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         recv_buf(sock)
@@ -381,7 +408,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, key)
     }
 
-    pub fn exists_rsp(&mut self) -> Result<bool, Error> {
+    pub fn exists_rsp(&mut self) -> Result<bool> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         recv_bool(sock)
@@ -394,7 +421,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, key)
     }
 
-    pub fn get_rsp(&mut self) -> Result<Vec<u8>, Error> {
+    pub fn get_rsp(&mut self) -> Result<Vec<u8>> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         recv_buf(sock)
@@ -407,7 +434,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, val)
     }
 
-    pub fn set_rsp(&mut self) -> Result<(), Error> {
+    pub fn set_rsp(&mut self) -> Result<()> {
         recv_rsp(&mut self.sock)
     }
 
@@ -417,7 +444,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, key)
     }
 
-    pub fn delete_rsp(&mut self) -> Result<(), Error> {
+    pub fn delete_rsp(&mut self) -> Result<()> {
         recv_rsp(&mut self.sock)
     }
 
@@ -455,7 +482,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                             max_entries)
     }
 
-    fn recv_keys_rsp(&mut self) -> Result<Vec<Vec<u8>>, Error> {
+    fn recv_keys_rsp(&mut self) -> Result<Vec<Vec<u8>>> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         let n = try!(recv_i32(sock));
@@ -469,7 +496,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         Ok(v)
     }
 
-    pub fn range_rsp(&mut self) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn range_rsp(&mut self) -> Result<Vec<Vec<u8>>> {
         self.recv_keys_rsp()
     }
 
@@ -489,7 +516,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                             max_entries)
     }
 
-    pub fn range_entries_rsp(&mut self) -> Result<KeysAndVals, Error> {
+    pub fn range_entries_rsp(&mut self) -> Result<KeysAndVals> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         let n = try!(recv_i32(sock));
@@ -516,7 +543,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_i32(sock, max_entries)
     }
 
-    pub fn prefix_keys_rsp(&mut self) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn prefix_keys_rsp(&mut self) -> Result<Vec<Vec<u8>>> {
         self.recv_keys_rsp()
     }
 
@@ -531,13 +558,13 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_option(sock, new)
     }
 
-    fn recv_option_rsp(&mut self) -> Result<Option<Vec<u8>>, Error> {
+    fn recv_option_rsp(&mut self) -> Result<Option<Vec<u8>>> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         recv_option(sock)
     }
 
-    pub fn test_and_set_rsp(&mut self) -> Result<Option<Vec<u8>>, Error> {
+    pub fn test_and_set_rsp(&mut self) -> Result<Option<Vec<u8>>> {
         self.recv_option_rsp()
     }
 
@@ -547,7 +574,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_buf(sock, pfx)
     }
 
-    pub fn delete_prefix_rsp(&mut self) -> Result<i32, Error> {
+    pub fn delete_prefix_rsp(&mut self) -> Result<i32> {
         let ref mut sock = self.sock;
         try!(recv_rsp(sock));
         recv_i32(sock)
@@ -560,7 +587,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         send_option(sock, arg)
     }
 
-    pub fn user_function_rsp(&mut self) -> Result<Option<Vec<u8>>, Error> {
+    pub fn user_function_rsp(&mut self) -> Result<Option<Vec<u8>>> {
         self.recv_option_rsp()
     }
 
@@ -577,7 +604,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         self.send_seq_req(Request::Sequence, acts)
     }
 
-    pub fn sequence_rsp(&mut self) -> Result<(), Error> {
+    pub fn sequence_rsp(&mut self) -> Result<()> {
         recv_rsp(&mut self.sock)
     }
 
@@ -586,7 +613,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
         self.send_seq_req(Request::SyncedSequence, acts)
     }
 
-    pub fn synced_sequence_rsp(&mut self) -> Result<(), Error> {
+    pub fn synced_sequence_rsp(&mut self) -> Result<()> {
         recv_rsp(&mut self.sock)
     }
 }

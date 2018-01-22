@@ -144,7 +144,7 @@ pub type KeysAndVals = Vec<(Vec<u8>, Vec<u8>)>;
 const MAGIC : i32 = 0xb1ff0000u32 as i32;
 
 #[derive(Clone, Debug)]
-enum Request {
+enum Opcode {
     Ping = 0x1,
     WhoMaster = 0x2,
     Exists = 0x7,
@@ -220,8 +220,8 @@ fn send_consistency<W: Write>(w : &mut W, c : &Consistency) -> std::io::Result<(
     Ok(())
 }
 
-fn send_req<W: Write>(w : &mut W, cmd : Request) -> std::io::Result<()> {
-    send_i32(w, MAGIC | cmd as i32)
+fn send_req<W: Write>(w : &mut W, opcode : Opcode) -> std::io::Result<()> {
+    send_i32(w, MAGIC | opcode as i32)
 }
 
 fn send_byte<W: Write>(w : &mut W, byte : u8) -> std::io::Result<()> {
@@ -366,18 +366,18 @@ impl<T> Connection<T> where T : Debug + Read + Write {
     pub fn prologue(&mut self) -> std::io::Result<()> {
         let ref mut sock = self.sock;
         send_i32(sock, MAGIC)?;
-        send_i32(sock, Request::Ping as i32)?;
+        send_i32(sock, Opcode::Ping as i32)?;
         let cid = self.cluster_id.0.clone();
         send_buf(sock, &cid.as_bytes())?;
         Ok(())
     }
 
     pub fn version_req(&mut self) -> std::io::Result<()> {
-        send_req(&mut self.sock, Request::Version)
+        send_req(&mut self.sock, Opcode::Version)
     }
 
     pub fn who_master_req(&mut self) -> std::io::Result<()> {
-        send_req(&mut self.sock, Request::WhoMaster)
+        send_req(&mut self.sock, Opcode::WhoMaster)
     }
 
     pub fn who_master_rsp(&mut self) -> Result<Option<NodeId>> {
@@ -389,7 +389,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn hello_req(&mut self, id : &str) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::Ping)?;
+        send_req(sock, Opcode::Ping)?;
         send_buf(sock, &id.as_bytes())?;
         let cid = self.cluster_id.0.clone();
         send_buf(sock, &cid.as_bytes())
@@ -403,7 +403,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn exists_req(&mut self, consistency : &Consistency, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::Exists)?;
+        send_req(sock, Opcode::Exists)?;
         send_consistency(sock, consistency)?;
         send_buf(sock, key)
     }
@@ -416,7 +416,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn get_req(&mut self, consistency : &Consistency, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::Get)?;
+        send_req(sock, Opcode::Get)?;
         send_consistency(sock, consistency)?;
         send_buf(sock, key)
     }
@@ -429,7 +429,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn set_req(&mut self, key : &[u8], val : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::Set)?;
+        send_req(sock, Opcode::Set)?;
         send_buf(sock, key)?;
         send_buf(sock, val)
     }
@@ -440,7 +440,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn delete_req(&mut self, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::Delete)?;
+        send_req(sock, Opcode::Delete)?;
         send_buf(sock, key)
     }
 
@@ -449,7 +449,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
     }
 
     fn send_range_req(&mut self,
-                      req : Request,
+                      opcode : Opcode,
                       consistency : &Consistency,
                       first_key : Option<&[u8]>,
                       include_first : bool,
@@ -457,7 +457,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                       include_last : bool,
                       max_entries : i32) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, req)?;
+        send_req(sock, opcode)?;
         send_consistency(sock, consistency)?;
         send_option(sock, first_key)?;
         send_bool(sock, include_first)?;
@@ -473,7 +473,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                      last_key : Option<&[u8]>,
                      include_last : bool,
                      max_entries : i32) -> std::io::Result<()> {
-        self.send_range_req(Request::Range,
+        self.send_range_req(Opcode::Range,
                             consistency,
                             first_key,
                             include_first,
@@ -507,7 +507,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                              last_key : Option<&[u8]>,
                              include_last : bool,
                              max_entries : i32) -> std::io::Result<()> {
-        self.send_range_req(Request::RangeEntries,
+        self.send_range_req(Opcode::RangeEntries,
                             consistency,
                             first_key,
                             include_first,
@@ -537,7 +537,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                            prefix : &[u8],
                            max_entries : i32) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::PrefixKeys)?;
+        send_req(sock, Opcode::PrefixKeys)?;
         send_consistency(sock, consistency)?;
         send_buf(sock, prefix)?;
         send_i32(sock, max_entries)
@@ -552,7 +552,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                             old : Option<&[u8]>,
                             new : Option<&[u8]>) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::TestAndSet)?;
+        send_req(sock, Opcode::TestAndSet)?;
         send_buf(sock, key)?;
         send_option(sock, old)?;
         send_option(sock, new)
@@ -570,7 +570,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn delete_prefix_req(&mut self, pfx : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::DeletePrefix)?;
+        send_req(sock, Opcode::DeletePrefix)?;
         send_buf(sock, pfx)
     }
 
@@ -582,7 +582,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn user_function_req(&mut self, fun : &str, arg : Option<&[u8]>) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        send_req(sock, Request::UserFunction)?;
+        send_req(sock, Opcode::UserFunction)?;
         send_buf(sock, fun.as_bytes())?;
         send_option(sock, arg)
     }
@@ -592,7 +592,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
     }
 
     fn send_seq_req(&mut self,
-                    req : Request,
+                    req : Opcode,
                     acts : &[Action]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
         send_req(sock, req)?;
@@ -601,7 +601,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn sequence_req(&mut self,
                         acts : &[Action]) -> std::io::Result<()> {
-        self.send_seq_req(Request::Sequence, acts)
+        self.send_seq_req(Opcode::Sequence, acts)
     }
 
     pub fn sequence_rsp(&mut self) -> Result<()> {
@@ -610,7 +610,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn synced_sequence_req(&mut self,
                                acts : &[Action]) -> std::io::Result<()> {
-        self.send_seq_req(Request::SyncedSequence, acts)
+        self.send_seq_req(Opcode::SyncedSequence, acts)
     }
 
     pub fn synced_sequence_rsp(&mut self) -> Result<()> {
@@ -622,7 +622,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 mod test {
 
     use super::*;
-    use super::{MAGIC, Request, recv_i32, send_req, to_error_code};
+    use super::{MAGIC, Opcode, recv_i32, send_req, to_error_code};
     use std::io::Cursor;
 
     #[test]
@@ -679,31 +679,31 @@ mod test {
 
     #[test]
     fn requests() {
-        let check = |req : Request| -> () {
+        let check = |opcode : Opcode| -> () {
             let mut w = vec![];
-            assert!(send_req(&mut w, req.clone()).is_ok());
+            assert!(send_req(&mut w, opcode.clone()).is_ok());
 
             let mut r = Cursor::new(w);
             let rsp = recv_i32(& mut r);
             assert!(rsp.is_ok());
             assert_eq!(rsp.unwrap(),
-                       MAGIC | req as i32);
+                       MAGIC | opcode as i32);
         };
 
-        check(Request::Ping);
-        check(Request::WhoMaster);
-        check(Request::Exists);
-        check(Request::Get);
-        check(Request::Set);
-        check(Request::Delete);
-        check(Request::Range);
-        check(Request::RangeEntries);
-        check(Request::Sequence);
-        check(Request::PrefixKeys);
-        check(Request::TestAndSet);
-        check(Request::DeletePrefix);
-        check(Request::UserFunction);
-        check(Request::SyncedSequence);
-        check(Request::Version);
+        check(Opcode::Ping);
+        check(Opcode::WhoMaster);
+        check(Opcode::Exists);
+        check(Opcode::Get);
+        check(Opcode::Set);
+        check(Opcode::Delete);
+        check(Opcode::Range);
+        check(Opcode::RangeEntries);
+        check(Opcode::Sequence);
+        check(Opcode::PrefixKeys);
+        check(Opcode::TestAndSet);
+        check(Opcode::DeletePrefix);
+        check(Opcode::UserFunction);
+        check(Opcode::SyncedSequence);
+        check(Opcode::Version);
     }
 }

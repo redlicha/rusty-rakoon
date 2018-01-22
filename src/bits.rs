@@ -114,12 +114,12 @@ impl From<std::io::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-pub enum Action<'k, 'v> {
-    Set { key : &'k [u8], value : &'v [u8] },
-    Delete { key : &'k [u8] },
-    Assert { key : &'k [u8], value : Option<&'v [u8]> },
-    AssertExists { key : &'k [u8] },
-    UserFunction { fun : &'k str, arg : Option<&'v [u8]> },
+pub enum Action<'a> {
+    Set { key : &'a [u8], value : &'a [u8] },
+    Delete { key : &'a [u8] },
+    Assert { key : &'a [u8], value : Option<&'a [u8]> },
+    AssertExists { key : &'a [u8] },
+    UserFunction { fun : &'a str, arg : Option<&'a [u8]> },
 }
 
 #[derive(Debug)]

@@ -129,10 +129,10 @@ pub struct Connection<T : Debug + Read + Write> {
     sock: T,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Stamp(i64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Consistency {
     Consistent,
     NoGuarantees,
@@ -143,7 +143,7 @@ pub type KeysAndVals = Vec<(Vec<u8>, Vec<u8>)>;
 
 const MAGIC : i32 = 0xb1ff0000u32 as i32;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 enum Opcode {
     Ping = 0x1,
     WhoMaster = 0x2,
@@ -681,7 +681,7 @@ mod test {
     fn requests() {
         let check = |opcode : Opcode| -> () {
             let mut w = vec![];
-            assert!(send_req(&mut w, opcode.clone()).is_ok());
+            assert!(send_req(&mut w, opcode).is_ok());
 
             let mut r = Cursor::new(w);
             let rsp = recv_i32(& mut r);

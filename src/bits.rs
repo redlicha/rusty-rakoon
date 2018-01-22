@@ -191,12 +191,12 @@ fn to_error_code(e : i32) -> ErrorCode {
 }
 
 fn send_i32<W: Write>(w : &mut W, num : i32) -> std::io::Result<()> {
-    try!(w.write_i32::<LittleEndian>(num));
+    w.write_i32::<LittleEndian>(num)?;
     Ok(())
 }
 
 fn send_i64<W: Write>(w : &mut W, num : i64) -> std::io::Result<()> {
-    try!(w.write_i64::<LittleEndian>(num));
+    w.write_i64::<LittleEndian>(num)?;
     Ok(())
 }
 
@@ -209,11 +209,11 @@ fn recv_i64<R: Read>(r : &mut R) -> Result<i64> {
 
 fn send_consistency<W: Write>(w : &mut W, c : &Consistency) -> std::io::Result<()> {
     match c {
-        &Consistency::Consistent => try!(send_byte(w, 0x0 as u8)),
-        &Consistency::NoGuarantees => try!(send_byte(w, 0x1 as u8)),
+        &Consistency::Consistent => send_byte(w, 0x0 as u8)?,
+        &Consistency::NoGuarantees => send_byte(w, 0x1 as u8)?,
         &Consistency::AtLeast(ref stamp) => {
-            try!(send_byte(w, 0x2 as u8));
-            try!(send_i64(w, stamp.0))
+            send_byte(w, 0x2 as u8)?;
+            send_i64(w, stamp.0)?
         }
     }
 
@@ -225,7 +225,7 @@ fn send_req<W: Write>(w : &mut W, cmd : Request) -> std::io::Result<()> {
 }
 
 fn send_byte<W: Write>(w : &mut W, byte : u8) -> std::io::Result<()> {
-    try!(w.write_u8(byte));
+    w.write_u8(byte)?;
     Ok(())
 }
 
@@ -240,11 +240,11 @@ fn send_bool<W: Write>(w : &mut W, b : bool) -> std::io::Result<()> {
 fn send_option<W: Write>(w : &mut W, opt : Option<&[u8]>) -> std::io::Result<()> {
     match opt {
         Some(ref buf) => {
-            try!(send_bool(w, true));
-            try!(send_buf(w, buf));
+            send_bool(w, true)?;
+            send_buf(w, buf)?;
         }
         None => {
-            try!(send_bool(w, false));
+            send_bool(w, false)?;
         }
     }
 
@@ -252,34 +252,34 @@ fn send_option<W: Write>(w : &mut W, opt : Option<&[u8]>) -> std::io::Result<()>
 }
 
 fn send_buf<W: Write>(w : &mut W, buf : &[u8]) -> std::io::Result<()> {
-    try!(send_i32(w, buf.len() as i32));
-    try!(w.write_all(&buf));
+    send_i32(w, buf.len() as i32)?;
+    w.write_all(&buf)?;
     Ok(())
 }
 
 fn send_action<W: Write>(w: &mut W, act : &Action) -> std::io::Result<()> {
     match act {
-        &Action::Set{key, value}=> {
-            try!(send_i32(w, 1));
-            try!(send_buf(w, key));
+        &Action::Set{key, value} => {
+            send_i32(w, 1)?;
+            send_buf(w, key)?;
             send_buf(w, value)
         },
         &Action::Delete{key} => {
-            try!(send_i32(w, 2));
+            send_i32(w, 2)?;
             send_buf(w, key)
         },
         &Action::UserFunction{fun, arg} => {
-            try!(send_i32(w, 7));
-            try!(send_buf(w, fun.as_bytes()));
+            send_i32(w, 7)?;
+            send_buf(w, fun.as_bytes())?;
             send_option(w, arg)
         },
         &Action::Assert{key, value} => {
-            try!(send_i32(w, 8));
-            try!(send_buf(w, key));
+            send_i32(w, 8)?;
+            send_buf(w, key)?;
             send_option(w, value)
         }
         &Action::AssertExists{key} => {
-            try!(send_i32(w, 15));
+            send_i32(w, 15)?;
             send_buf(w, key)
         },
     }
@@ -287,10 +287,10 @@ fn send_action<W: Write>(w: &mut W, act : &Action) -> std::io::Result<()> {
 
 fn send_sequence<W: Write>(w: &mut W, acts : &[Action]) -> std::io::Result<()> {
     let mut cur = std::io::Cursor::new(Vec::new());
-    try!(send_i32(&mut cur, 5 as i32));
-    try!(send_i32(&mut cur, acts.len() as i32));
+    send_i32(&mut cur, 5 as i32)?;
+    send_i32(&mut cur, acts.len() as i32)?;
     for ref a in acts {
-        try!(send_action(&mut cur, a));
+        send_action(&mut cur, a)?;
     }
 
     send_buf(w, &cur.into_inner())
@@ -365,10 +365,10 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn prologue(&mut self) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_i32(sock, MAGIC));
-        try!(send_i32(sock, Request::Ping as i32));
+        send_i32(sock, MAGIC)?;
+        send_i32(sock, Request::Ping as i32)?;
         let cid = self.cluster_id.0.clone();
-        try!(send_buf(sock, &cid.as_bytes()));
+        send_buf(sock, &cid.as_bytes())?;
         Ok(())
     }
 
@@ -382,55 +382,55 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn who_master_rsp(&mut self) -> Result<Option<NodeId>> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
-        let maybe_master = try!(recv_option(sock));
+        recv_rsp(sock)?;
+        let maybe_master = recv_option(sock)?;
         Ok(maybe_master.map(|buf| { NodeId(String::from_utf8(buf).unwrap()) }))
     }
 
     pub fn hello_req(&mut self, id : &str) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::Ping));
-        try!(send_buf(sock, &id.as_bytes()));
+        send_req(sock, Request::Ping)?;
+        send_buf(sock, &id.as_bytes())?;
         let cid = self.cluster_id.0.clone();
         send_buf(sock, &cid.as_bytes())
     }
 
     pub fn hello_rsp(&mut self) -> Result<Vec<u8>> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
+        recv_rsp(sock)?;
         recv_buf(sock)
     }
 
     pub fn exists_req(&mut self, consistency : &Consistency, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::Exists));
-        try!(send_consistency(sock, consistency));
+        send_req(sock, Request::Exists)?;
+        send_consistency(sock, consistency)?;
         send_buf(sock, key)
     }
 
     pub fn exists_rsp(&mut self) -> Result<bool> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
+        recv_rsp(sock)?;
         recv_bool(sock)
     }
 
     pub fn get_req(&mut self, consistency : &Consistency, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::Get));
-        try!(send_consistency(sock, consistency));
+        send_req(sock, Request::Get)?;
+        send_consistency(sock, consistency)?;
         send_buf(sock, key)
     }
 
     pub fn get_rsp(&mut self) -> Result<Vec<u8>> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
+        recv_rsp(sock)?;
         recv_buf(sock)
     }
 
     pub fn set_req(&mut self, key : &[u8], val : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::Set));
-        try!(send_buf(sock, key));
+        send_req(sock, Request::Set)?;
+        send_buf(sock, key)?;
         send_buf(sock, val)
     }
 
@@ -440,7 +440,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn delete_req(&mut self, key : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::Delete));
+        send_req(sock, Request::Delete)?;
         send_buf(sock, key)
     }
 
@@ -457,12 +457,12 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                       include_last : bool,
                       max_entries : i32) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, req));
-        try!(send_consistency(sock, consistency));
-        try!(send_option(sock, first_key));
-        try!(send_bool(sock, include_first));
-        try!(send_option(sock, last_key));
-        try!(send_bool(sock, include_last));
+        send_req(sock, req)?;
+        send_consistency(sock, consistency)?;
+        send_option(sock, first_key)?;
+        send_bool(sock, include_first)?;
+        send_option(sock, last_key)?;
+        send_bool(sock, include_last)?;
         send_i32(sock, max_entries)
     }
 
@@ -484,12 +484,12 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     fn recv_keys_rsp(&mut self) -> Result<Vec<Vec<u8>>> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
-        let n = try!(recv_i32(sock));
+        recv_rsp(sock)?;
+        let n = recv_i32(sock)?;
         let mut v = Vec::new();
         v.reserve(n as usize);
         for _ in 0..n {
-            v.push(try!(recv_buf(sock)));
+            v.push(recv_buf(sock)?);
         }
 
         v.reverse();
@@ -518,13 +518,13 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn range_entries_rsp(&mut self) -> Result<KeysAndVals> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
-        let n = try!(recv_i32(sock));
+        recv_rsp(sock)?;
+        let n = recv_i32(sock)?;
         let mut vec = Vec::new();
         vec.reserve(n as usize);
         for _ in 0..n {
-            let k = try!(recv_buf(sock));
-            let v = try!(recv_buf(sock));
+            let k = recv_buf(sock)?;
+            let v = recv_buf(sock)?;
             vec.push((k, v));
         }
 
@@ -537,9 +537,9 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                            prefix : &[u8],
                            max_entries : i32) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::PrefixKeys));
-        try!(send_consistency(sock, consistency));
-        try!(send_buf(sock, prefix));
+        send_req(sock, Request::PrefixKeys)?;
+        send_consistency(sock, consistency)?;
+        send_buf(sock, prefix)?;
         send_i32(sock, max_entries)
     }
 
@@ -552,15 +552,15 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                             old : Option<&[u8]>,
                             new : Option<&[u8]>) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::TestAndSet));
-        try!(send_buf(sock, key));
-        try!(send_option(sock, old));
+        send_req(sock, Request::TestAndSet)?;
+        send_buf(sock, key)?;
+        send_option(sock, old)?;
         send_option(sock, new)
     }
 
     fn recv_option_rsp(&mut self) -> Result<Option<Vec<u8>>> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
+        recv_rsp(sock)?;
         recv_option(sock)
     }
 
@@ -570,20 +570,20 @@ impl<T> Connection<T> where T : Debug + Read + Write {
 
     pub fn delete_prefix_req(&mut self, pfx : &[u8]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::DeletePrefix));
+        send_req(sock, Request::DeletePrefix)?;
         send_buf(sock, pfx)
     }
 
     pub fn delete_prefix_rsp(&mut self) -> Result<i32> {
         let ref mut sock = self.sock;
-        try!(recv_rsp(sock));
+        recv_rsp(sock)?;
         recv_i32(sock)
     }
 
     pub fn user_function_req(&mut self, fun : &str, arg : Option<&[u8]>) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, Request::UserFunction));
-        try!(send_buf(sock, fun.as_bytes()));
+        send_req(sock, Request::UserFunction)?;
+        send_buf(sock, fun.as_bytes())?;
         send_option(sock, arg)
     }
 
@@ -595,7 +595,7 @@ impl<T> Connection<T> where T : Debug + Read + Write {
                     req : Request,
                     acts : &[Action]) -> std::io::Result<()> {
         let ref mut sock = self.sock;
-        try!(send_req(sock, req));
+        send_req(sock, req)?;
         send_sequence(sock, acts)
     }
 

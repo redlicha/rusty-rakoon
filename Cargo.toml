@@ -1,12 +1,23 @@
 [package]
 name = "rusty-rakoon"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Arne Redlich <arne.redlich@googlemail.com>"]
 license = "Apache 2.0"
 
 [dependencies]
 byteorder = "*"
+bytes = "*"
+futures = "0.1"
 libc = "*"
+log = "*"
+num = "*"
+num-derive = "*"
+tokio = "0.1"
+tokio-io = "0.1"
+tokio-service = "*"
+tokio-timer = "0.1"
 
 [dev-dependencies]
 uuid = { version = "*", features = ["v4"] }
+env_logger = "*"
+rand = "*"

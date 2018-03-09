@@ -1,4 +1,4 @@
-// Copyright (C) 2016 Arne Redlich <arne.redlich@googlemail.com>
+// Copyright (C) 2016-2018 Arne Redlich <arne.redlich@googlemail.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,23 +10,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+extern crate bytes;
+extern crate env_logger;
+extern crate futures;
 extern crate libc;
+#[macro_use] extern crate log;
+extern crate rand;
 extern crate rusty_rakoon;
 extern crate uuid;
+extern crate tokio;
 
 #[cfg(test)]
 mod test {
-
+    use bytes::BytesMut;
+    use env_logger;
+    use futures::future::{Executor, err, Future, Loop, loop_fn};
     use libc;
+    use rand::thread_rng;
+    use rand::distributions::{Sample, Range};
+    use rusty_rakoon::*;
     use std;
     use std::collections::BTreeMap;
     use std::ffi::{CStr, CString};
     use std::fs::File;
     use std::io::{BufWriter, Write};
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::str;
     use std::sync::{Arc, Mutex, Once, ONCE_INIT};
-    use rusty_rakoon::bits::*;
+    use tokio::executor::current_thread;
     use uuid;
 
     fn getenv(name : &str) -> Option<String> {
@@ -71,9 +83,8 @@ mod test {
 
         unsafe {
             ONCE.call_once(|| {
-
                 let port_base = get_env_or_default("ARAKOON_PORT_BASE",
-                                                   &17000);
+                                                   &17_000);
                 let singleton = PortAllocator {
                     next_port : Arc::new(Mutex::new(port_base))
                 };
@@ -105,16 +116,16 @@ mod test {
     }
 
     impl ArakoonNode {
-        fn new(node_id : NodeId,
+        fn new(node_id : &NodeId,
                port_base : u16,
                root : &PathBuf,
                binary : &PathBuf) -> ArakoonNode {
             let home = ArakoonNode::node_home(root,
-                                              &node_id);
+                                              node_id);
             std::fs::create_dir_all(&home).unwrap();
             ArakoonNode {node_id : node_id.clone(),
-                         port_base : port_base,
-                         home : home,
+                         port_base,
+                         home,
                          binary : binary.clone(),
                          child : None }
         }
@@ -138,9 +149,10 @@ mod test {
         fn address(&self) -> String {
             hostname() + &":".to_owned() + &self.client_port().to_string()
         }
+
         fn config(&self) -> NodeConfig {
-            NodeConfig::new(&self.node_id,
-                            &self.address())
+            NodeConfig::new(self.node_id.clone(),
+                            &self.address()).expect("fix yer test")
         }
 
         fn wait_for_service(&self, retries : usize) -> () {
@@ -148,9 +160,9 @@ mod test {
                 let res = std::net::TcpStream::connect(&self.address() as &str);
                 match res {
                     Ok(_) => {
-                        println!("{} found running after {} retries",
-                                 self.node_id,
-                                 i);
+                        info!("{} found running after {} retries",
+                              self.node_id,
+                              i);
                         return ();
                     },
                     Err(e) => if i == retries {
@@ -166,7 +178,7 @@ mod test {
         }
 
         fn start(&mut self) {
-            if let None = self.child {
+            if self.child.is_none() {
                 let c = std::process::Command::new(&self.binary)
                     .arg("--node")
                     .arg(&self.node_id.to_string())
@@ -177,9 +189,9 @@ mod test {
                                                 self.binary.to_str().unwrap(),
                                                 self.node_id,
                                                 e)});
-                println!("forked off process for {}: {}",
-                         self.node_id,
-                         c.id());
+                info!("forked off process for {}: {}",
+                      self.node_id,
+                      c.id());
                 self.child = Some(c);
             } else {
                 panic!("{} is already running!", self.node_id)
@@ -195,7 +207,6 @@ mod test {
             }
 
             self.child = None;
-
         }
     }
 
@@ -212,8 +223,6 @@ mod test {
         nodes : BTreeMap<NodeId, ArakoonNode>,
     }
 
-    type ArakoonConnection = Connection<std::net::TcpStream>;
-
     impl ArakoonCluster {
         fn new(count : u16) -> ArakoonCluster {
             let tempdir = get_env_or_default("TEMP",
@@ -228,27 +237,27 @@ mod test {
             let port_base = *next_port;
             *next_port += 2 * count;
 
-            println!("setting up arakoon cluster {:?}: {} node(s), home={}, binary={}, port_base={}",
-                     cluster_id,
-                     count,
-                     home.display(),
-                     binary,
-                     port_base);
+            info!("setting up arakoon cluster {:?}: {} node(s), home={}, binary={}, port_base={}",
+                  cluster_id,
+                  count,
+                  home.display(),
+                  binary,
+                  port_base);
 
             if home.exists() {
                 assert!(std::fs::remove_dir_all(&home).is_ok());
             }
 
-            let mut cluster = ArakoonCluster{cluster_id : cluster_id.clone(),
-                                             home : home,
-                                             port_base : port_base,
-                                             nodes : BTreeMap::new() };
+            let mut cluster = ArakoonCluster{cluster_id: cluster_id.clone(),
+                                             home,
+                                             port_base,
+                                             nodes: BTreeMap::new()};
 
             assert!(std::fs::create_dir_all(&cluster.home).is_ok());
 
             for i in 0..count {
                 let node_id = NodeId("node_".to_owned() + &i.to_string());
-                let node = ArakoonNode::new(node_id.clone(),
+                let node = ArakoonNode::new(&node_id,
                                             cluster.port_base + 2 * i,
                                             &cluster.home,
                                             &PathBuf::from(&binary));
@@ -256,15 +265,15 @@ mod test {
                                      node);
             }
 
-            for (_, node) in cluster.nodes.iter() {
-                cluster.write_config_file(&node).unwrap();
+            for node in cluster.nodes.values() {
+                cluster.write_config_file(node).unwrap();
             }
 
-            for (_, node) in cluster.nodes.iter_mut() {
+            for node in cluster.nodes.values_mut() {
                 node.start();
             }
 
-            for (_, node) in cluster.nodes.iter() {
+            for node in cluster.nodes.values() {
                 node.wait_for_service(60);
             }
 
@@ -280,7 +289,7 @@ mod test {
             try!(write!(w, "cluster = "));
 
             let mut comma = false;
-            for (_, node) in self.nodes.iter() {
+            for node in self.nodes.values() {
                 if comma {
                     try!(write!(w, ", "));
                 } else {
@@ -295,7 +304,7 @@ mod test {
             try!(writeln!(w, "preferred_master = true"));
             try!(writeln!(w, ""));
 
-            for (_, node) in self.nodes.iter() {
+            for node in self.nodes.values() {
                 try!(writeln!(w, "[{}]", node.node_id));
                 try!(writeln!(w, "ip = {}", hostname()));
                 try!(writeln!(w, "client_port = {}", node.client_port()));
@@ -310,655 +319,897 @@ mod test {
 
         fn node_configs(&self) -> Vec<NodeConfig> {
             let mut node_configs = vec![];
-            for (_, node) in self.nodes.iter() {
+            for node in self.nodes.values() {
                 node_configs.push(node.config())
             }
 
             node_configs
         }
-
-        fn connect_to_node(&self, node_config : &NodeConfig) -> Result<ArakoonConnection> {
-            match std::net::TcpStream::connect(&node_config.addr as &str) {
-                Ok(stream) => {
-                    let mut conn = Connection::new(stream,
-                                                   &self.cluster_id,
-                                                   &node_config.id);
-                    match conn.prologue() {
-                        Ok(_) => Ok(conn),
-                        Err(e) => Err(Error::IoError(e)),
-                    }
-                },
-                Err(e) => {
-                    Err(Error::IoError(e))
-                }
-            }
-        }
-
-        fn determine_master(&self, wait_secs : u32) -> ArakoonConnection {
-            assert!(wait_secs > 0);
-            for i in 0..wait_secs {
-                if let Ok(mut conn) = self.connect_to_node(&self.node_configs()[0]) {
-                    if conn.who_master_req().is_ok() {
-                        if let Ok(Some(master)) = conn.who_master_rsp() {
-                            println!("master: {:?}", master);
-                            if let Ok(master_conn) = self.connect_to_node(&self.nodes.get(&master).unwrap().config()) {
-                                return master_conn;
-                            }
-                        }
-                    }
-                }
-                println!("failed to determine master {} - going to sleep for a second", i);
-                std::thread::sleep(std::time::Duration::new(1, 0));
-            }
-
-            panic!("could not determine master after {} seconds",
-                   wait_secs);
-        }
     }
 
     impl Drop for ArakoonCluster {
         fn drop(&mut self) {
-            println!("tearing down arakoon cluster {:?}", self.cluster_id);
+            info!("tearing down arakoon cluster {:?}", self.cluster_id);
             self.nodes.clear();
             assert!(std::fs::remove_dir_all(&self.home).is_ok());
         }
     }
 
-    fn req_rsp<ReqFn, RspFn, Ret>(conn : &mut ArakoonConnection,
-                                  req_fn : ReqFn,
-                                  rsp_fn : RspFn) -> Ret
-        where ReqFn : Fn(&mut ArakoonConnection) -> std::io::Result<()>,
-    RspFn : Fn(&mut ArakoonConnection) -> Result<Ret> {
-        assert!(req_fn(conn).is_ok());
-        let rep = rsp_fn(conn);
-        assert!(rep.is_ok());
-        rep.unwrap()
-    }
-
-    fn exists_(conn : &mut ArakoonConnection, key : &[u8]) -> bool {
-        req_rsp(conn,
-                |conn| { conn.exists_req(&Consistency::Consistent, key) },
-                |conn| { conn.exists_rsp() })
-    }
-
-    fn get_(conn : &mut ArakoonConnection,
-            key : &[u8]) -> Option<Vec<u8>>
+    fn execute_test<F>(num_nodes: u16, test_fn: F)
+    where
+        F: Fn(Rc<current_thread::TaskExecutor>, Rc<ArakoonCluster>)
     {
-        assert!(conn.get_req(&Consistency::Consistent,
-                             key).is_ok());
-        let rep = conn.get_rsp();
-        match rep {
-            Ok(val) => Some(val),
-            Err(Error::ErrorResponse(ErrorCode::NotFound, _)) => None,
-            Err(e) => panic!("unexpected error {:?}", e)
+        // ignore errors caused by multiple invocations
+        drop(env_logger::try_init());
+
+        let cluster = Rc::new(ArakoonCluster::new(num_nodes));
+
+        current_thread::run(|_| {
+            test_fn(Rc::new(current_thread::task_executor()),
+                    cluster.clone())
+        });
+    }
+
+    // convert this to a method on Node *after* fixing the blocking sleep
+    fn determine_master(node: Rc<Node>,
+                        wait_secs: u32) -> Box<Future<Item=NodeId, Error=Error>>
+    {
+        Box::new(loop_fn(0, move |attempt| {
+            node.who_master().then(move |res| {
+                match res {
+                    Ok(Some(node_id)) => {
+                        Ok(Loop::Break(node_id))
+                    },
+                    Ok(None) => {
+                        if attempt < wait_secs {
+                            info!("no master yet, going to sleep");
+                            std::thread::sleep(std::time::Duration::new(1, 0));
+                            Ok(Loop::Continue(attempt + 1))
+                        } else {
+                            error!("no master yet, giving up");
+                            let e = Error::IoError(std::io::Error::new(std::io::ErrorKind::Other,
+                                                                       "no master available"));
+                            Err(e)
+                        }
+                    },
+                    Err(e) => {
+                        error!("failed to determine master: {}", e);
+                        Err(e)
+                    },
+                }
+            })
+        }))
+    }
+
+    fn connect_to_master<'e, E>(cluster: Rc<ArakoonCluster>,
+                                executor: Rc<E>,
+                                wait_secs: u32) -> Box<Future<Item=Rc<Node>, Error=Error> + 'e>
+    where
+        E: Executor<Box<Future<Item=(), Error=()>>> + 'e
+    {
+        let node_configs = cluster.node_configs().clone();
+        assert!(!node_configs.is_empty());
+
+        // pick a random node to connect to exercise the path that first connects to a slave
+        let mut rng = thread_rng();
+        let mut range = Range::new(0, node_configs.len());
+        let idx = range.sample(&mut rng);
+
+        debug!("connecting to {}", node_configs[idx].node_id);
+        match Node::connect(cluster.cluster_id.clone(),
+                            &node_configs[idx],
+                            executor.clone()) {
+            Ok(node) => {
+                let node = Rc::new(node);
+                let fut = determine_master(node.clone(),
+                                           wait_secs)
+                    .then(move |ret| {
+                        match ret {
+                            Ok(node_id) => {
+                                debug!("master is {}", node_id);
+                                if node_configs[idx].node_id == node_id {
+                                    Ok(node)
+                                } else {
+                                    let maybe_ncfg = node_configs.iter().find(|cfg|
+                                                                              {
+                                                                                  cfg.node_id == node_id
+                                                                              });
+                                    if let Some(node_config) = maybe_ncfg {
+                                        debug!("re-connecting to {}", node_config.node_id);
+                                        match Node::connect(cluster.cluster_id.clone(),
+                                                            node_config,
+                                                            executor.clone()) {
+                                            Ok(node) => return Ok(Rc::new(node)),
+                                            Err(e) => return Err(Error::IoError(e)),
+                                        }
+                                    } else {
+                                        // TODO: different/better error
+                                        let e = std::io::Error::new(std::io::ErrorKind::Other,
+                                                                    "master not found in cluster config");
+                                        return Err(Error::IoError(e));
+                                    }
+                                }
+                            },
+                            Err(e) => Err(e),
+                        }
+                    });
+                Box::new(fut)
+            },
+            Err(e) => Box::new(err(Error::IoError(e))),
         }
-    }
-
-    fn set_(conn : &mut ArakoonConnection,
-            key : &[u8],
-            val : &[u8])
-    {
-        req_rsp(conn,
-                |conn| { conn.set_req(key, val) },
-                |conn| { conn.set_rsp() })
-    }
-
-    fn delete_(conn : &mut ArakoonConnection,
-               key : &[u8]) -> bool
-    {
-        assert!(conn.delete_req(key).is_ok());
-        let rep = conn.delete_rsp();
-        match rep {
-            Ok(()) => true,
-            Err(Error::ErrorResponse(ErrorCode::NotFound, _)) => false,
-            _ => panic!("unexpected DELETE reply {:?}", rep)
-        }
-    }
-
-    fn make_keys_and_vals(count : usize, key_pfx : &str, val_pfx : &str) -> KeysAndVals {
-        let mut vec = Vec::new();
-        vec.reserve(count);
-
-        for i in 0..count {
-            let k = key_pfx.to_owned() + &i.to_string();
-            let v = val_pfx.to_owned() + &i.to_string();
-
-            vec.push((k.as_bytes().to_owned(),
-                      v.as_bytes().to_owned()));
-        }
-        vec
-    }
-
-    fn set_keys_and_vals(conn : &mut ArakoonConnection, kvs : &KeysAndVals) {
-        for &(ref k, ref v) in kvs.iter() {
-            set_(conn, k, v);
-        }
-    }
-
-    fn keys(kvs : &KeysAndVals) -> Vec<Vec<u8>> {
-        kvs.iter().map(|&(ref k, _)|{ k.clone() }).collect()
-    }
-
-    fn fill(conn : &mut ArakoonConnection,
-            count : usize,
-            key_pfx : &str,
-            val_pfx : &str) -> KeysAndVals {
-        let kvs = make_keys_and_vals(count, key_pfx, val_pfx);
-        set_keys_and_vals(conn, &kvs);
-        kvs
-    }
-
-    fn range_(conn : &mut ArakoonConnection,
-              first : Option<&[u8]>,
-              include_first : bool,
-              last : Option<&[u8]>,
-              include_last : bool,
-              max : i32) -> Vec<Vec<u8>>
-    {
-        req_rsp(conn,
-                |conn| { conn.range_req(&Consistency::Consistent,
-                                        first,
-                                        include_first,
-                                        last,
-                                        include_last,
-                                        max) },
-                |conn| { conn.range_rsp() })
-    }
-
-
-    fn range_entries_(conn : &mut ArakoonConnection,
-                      first : Option<&[u8]>,
-                      include_first : bool,
-                      last : Option<&[u8]>,
-                      include_last : bool,
-                      max : i32) -> KeysAndVals
-    {
-        req_rsp(conn,
-                |conn| { conn.range_entries_req(&Consistency::Consistent,
-                                                first,
-                                                include_first,
-                                                last,
-                                                include_last,
-                                                max) },
-                |conn| { conn.range_entries_rsp() })
-    }
-
-    fn prefix_keys_(conn : &mut ArakoonConnection, pfx : &[u8], max : i32) -> Vec<Vec<u8>> {
-        req_rsp(conn,
-                |conn| { conn.prefix_keys_req(&Consistency::Consistent,
-                                              pfx,
-                                              max) },
-                |conn| { conn.prefix_keys_rsp() })
-    }
-
-    fn test_and_set_(conn : &mut ArakoonConnection,
-                     key : &[u8],
-                     old : Option<&[u8]>,
-                     new : Option<&[u8]>) -> Option<Vec<u8>> {
-        req_rsp(conn,
-                |conn| { conn.test_and_set_req(key,
-                                               old,
-                                               new) },
-                |conn| { conn.test_and_set_rsp() })
-    }
-
-    fn delete_prefix_(conn : &mut ArakoonConnection,
-                      pfx : &[u8]) -> i32 {
-        req_rsp(conn,
-                |conn| { conn.delete_prefix_req(pfx) },
-                |conn| { conn.delete_prefix_rsp() })
-    }
-
-    fn seq_req_rsp<ReqFn, RspFn>(conn : &mut ArakoonConnection,
-                                 acts : &[Action],
-                                 req_fn : ReqFn,
-                                 rsp_fn : RspFn) -> bool
-        where ReqFn : Fn(&mut ArakoonConnection, &[Action]) -> std::io::Result<()>,
-    RspFn : Fn(&mut ArakoonConnection) -> Result<()> {
-        assert!(req_fn(conn, acts).is_ok());
-        let rep = rsp_fn(conn);
-        match rep {
-            Ok(()) => true,
-            Err(Error::ErrorResponse(ErrorCode::AssertionFailed, _)) => false,
-            Err(e) => panic!("unexpected error {:?}", e)
-        }
-    }
-
-    fn sequence_(conn : &mut ArakoonConnection,
-                 acts : &[Action]) -> bool
-    {
-        seq_req_rsp(conn,
-                    acts,
-                    |conn, acts| { conn.sequence_req(acts) },
-                    |conn | { conn.sequence_rsp() })
-    }
-
-    fn synced_sequence_(conn : &mut ArakoonConnection,
-                        acts : &[Action]) -> bool {
-        seq_req_rsp(conn,
-                    acts,
-                    |conn, acts| { conn.synced_sequence_req(acts) },
-                    |conn| { conn.synced_sequence_rsp() })
-    }
-
-    fn test_sequence<SeqFn>(seq_fn : SeqFn)
-        where SeqFn : Fn(&mut ArakoonConnection, &[Action]) -> bool {
-
-        let cluster = ArakoonCluster::new(1);
-        let kvs = make_keys_and_vals(1, "key", "val");
-        let mut conn = cluster.determine_master(60);
-
-        set_keys_and_vals(&mut conn, &kvs);
-
-        let key = "foo".as_bytes();
-        let val = "bar".as_bytes();
-
-        let seq = vec![ Action::AssertExists{key : key},
-                        Action::Assert{key : key, value : Some(val)},
-                        Action::Set{key : &kvs[0].0, value : val},
-                        Action::Delete{key : key } ];
-
-        assert_eq!(false,
-                   seq_fn(&mut conn,
-                          &seq));
-
-        assert_eq!(kvs,
-                   range_entries_(&mut conn,
-                                  None,
-                                  false,
-                                  None,
-                                  false,
-                                  -1));
-
-        set_(&mut conn,
-             key,
-             val);
-
-        assert_eq!(true,
-                   seq_fn(&mut conn,
-                          &seq));
-
-        assert_eq!(vec![(kvs[0].0.clone(), val.to_owned())],
-                   range_entries_(&mut conn,
-                                  None,
-                                  false,
-                                  None,
-                                  false,
-                                  -1));
     }
 
     #[test]
     fn setup_and_teardown() {
-        let _ = ArakoonCluster::new(3);
-        // std::thread::sleep(std::time::Duration::new(300, 0));
+        execute_test(3, |_, _| {});
     }
 
     #[test]
     fn master() {
-        let cluster = ArakoonCluster::new(3);
+        execute_test(3, |executor, cluster| {
+            let node_configs = cluster.node_configs();
+            assert!(!node_configs.is_empty());
+            let client = Rc::new(Node::connect(cluster.cluster_id.clone(),
+                                               &node_configs[0],
+                                               executor.clone()).unwrap());
 
-        let node_configs = cluster.node_configs();
-        assert_eq!(3, node_configs.len());
+            executor.execute(determine_master(client.clone(), 30)
+                             .then(move |res| {
+                                 assert_eq!(node_configs[0].node_id,
+                                            res.unwrap());
+                                 Ok(())
+                             })).unwrap()
+        })
+    }
 
-        let conn = cluster.determine_master(60);
-
-        assert_eq!(conn.node_id,
-                   node_configs[0].id);
+    #[test]
+    fn connect_master() {
+        execute_test(3, |executor, cluster| {
+            let node_configs = cluster.node_configs();
+            assert!(!node_configs.is_empty());
+            executor.execute(connect_to_master(cluster, executor.clone(), 30)
+                             .then(move |res| {
+                                 assert_eq!(node_configs[0].node_id,
+                                            res.unwrap().node_id);
+                                 Ok(())
+                             })).unwrap();
+        })
     }
 
     #[test]
     fn hello() {
-        let cluster = ArakoonCluster::new(3);
+        execute_test(3, |executor, cluster| {
+            let node_configs = cluster.node_configs();
+            assert!(!node_configs.is_empty());
+            let client = Node::connect(cluster.cluster_id.clone(),
+                                       &node_configs[0],
+                                       executor.clone()).unwrap();
 
-        let node_configs = cluster.node_configs();
-        assert_eq!(3, node_configs.len());
+            executor.execute(client.hello()
+                             .then(|res| {
+                                 assert!(res.is_ok());
+                                 info!("hello response: {}", res.unwrap());
+                                 Ok(())
+                             })).unwrap()
+        })
+    }
 
-        let mut conn = cluster.connect_to_node(&node_configs[2]).unwrap();
-        assert!(conn.hello_req("Hullo, it is I").is_ok());
-        let rep = conn.hello_rsp();
-        println!("got reply {}", std::str::from_utf8(&rep.unwrap()).unwrap());
+    // TODO: factor out the connect_to_master part - but so far I cannot seem
+    // to get the lifetime of F right:
+    // fn execute_test_with_node<F>(node: Rc<Node>, fun: F)
+    // where
+    //     F: Fn(Rc<Node>) -> Box<Future<Item=(), Error=()>>
+    // {
+    //     execute_test(3, move |executor, cluster| {
+    //         let fut = connect_to_master(cluster, executor.clone(), 30)
+    //             .map_err(|e| {
+    //                 panic!("failed to connect to master: {}", e);
+    //             })
+    //             .map(fun).flatten();
+
+    //         executor.execute(fut).unwrap();
+    //     })
+    // }
+    //
+    // yields
+    //
+    //     error[E0310]: the parameter type `F` may not live long enough
+    //    --> tests/basics.rs:510:22
+    //     |
+    // 499 |     fn execute_test_with_node<F>(node: Rc<Node>, fun: F)
+    //     |                               - help: consider adding an explicit lifetime bound `F: 'static`...
+    // ...
+    // 510 |             executor.execute(fut).unwrap();
+    //     |                      ^^^^^^^
+    //     |
+    // note: ...so that the type `futures::Flatten<futures::Map<futures::MapErr<std::boxed::Box<futures::Future<Error=rusty_rakoon::Error, Item=std::rc::Rc<rusty_rakoon::Node>>>, [closure@tests/basics.rs:505:26: 507:18]>, F>>` will meet its required lifetime bounds
+    //    --> tests/basics.rs:510:22
+    //     |
+    // 510 |             executor.execute(fut).unwrap();
+    //     |                      ^^^^^^^
+    //
+    #[test]
+    fn exists_inexistent() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(|node| {
+                    node.exists(Consistency::Consistent, key)
+                        .map_err(|e| {
+                            panic!("'exists' failed: {}", e);
+                        })
+                        .map(|res| {
+                            assert_eq!(false,
+                                       res);
+                        })
+                })
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
     }
 
     #[test]
-    fn inexistence() {
-        let cluster = ArakoonCluster::new(1);
-        let mut conn = cluster.determine_master(60);
-        let kvs = make_keys_and_vals(1, "key", "val");
+    fn get_inexistent() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(|node| {
+                    node.get(Consistency::Consistent, key)
+                        .map(|res| {
+                            panic!("'get' returned something for an inexistent key: {:?}",
+                                   res);
+                        })
+                        .map_err(|e| {
+                            match e {
+                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                                            code),
+                                _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
+                                            e),
+                            }
+                        })
+                })
+                .flatten();
 
-        assert_eq!(false,
-                   exists_(&mut conn,
-                           &kvs[0].0));
-
-        assert!(get_(&mut conn,
-                     &kvs[0].0).is_none());
+            executor.execute(fut).unwrap();
+        })
     }
 
     #[test]
-    fn set_get_delete() {
-        let cluster = ArakoonCluster::new(1);
+    fn delete_inexistent() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(|node| {
+                    node.delete(key)
+                        .map(|_| {
+                            panic!("'delete' returned successfully for an inexistent key");
+                        })
+                        .map_err(|e| {
+                            match e {
+                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                                            code),
+                                _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
+                                            e),
+                            }
+                        })
+                })
+                .flatten();
 
-        let key = "key".as_bytes();
-
-        let mut conn = cluster.determine_master(60);
-
-        assert_eq!(false,
-                   exists_(&mut conn,
-                           &key));
-
-        let old_val = "old_val".as_bytes();
-
-        set_(&mut conn,
-             &key,
-             &old_val);
-
-        assert!(exists_(&mut conn,
-                        &key));
-
-
-        assert_eq!(old_val,
-                   get_(&mut conn,
-                        &key).unwrap().as_slice());
-
-        let new_val = "new val".as_bytes();
-
-        set_(&mut conn,
-             &key,
-             &new_val);
-
-        assert_eq!(new_val,
-                   get_(&mut conn,
-                        &key).unwrap().as_slice());
-
-        assert!(delete_(&mut conn,
-                        &key));
-
-        assert_eq!(false,
-                   exists_(&mut conn,
-                           &key));
-
-        assert_eq!(false,
-                   delete_(&mut conn,
-                           &key));
+            executor.execute(fut).unwrap();
+        })
     }
 
     #[test]
-    fn range() {
-        let cluster = ArakoonCluster::new(1);
-        let kvs = make_keys_and_vals(2, "key", "val");
+    fn set_and_get() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
 
-        let mut conn = cluster.determine_master(60);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), val.clone())
+                        .map_err(|e| {
+                            panic!("'set' returned {}", e);
+                        })
+                        .map(move |_| {
+                            node.get(Consistency::Consistent, key)
+                                .map_err(|e| {
+                                    panic!("'get' for existent key returned {}", e);
+                                })
+                                .map(move |res| {
+                                    assert_eq!(val, res);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
 
-        assert!(range_(&mut conn,
-                       Some(&kvs[0].0),
-                       true,
-                       Some(&kvs[1].0),
-                       true,
-                       2).is_empty());
+            executor.execute(fut).unwrap();
+        })
+    }
 
-        set_keys_and_vals(&mut conn,
-                          &kvs);
+    #[test]
+    fn set_and_exists() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
 
-        assert!(range_(&mut conn,
-                       Some(&kvs[0].0),
-                       false,
-                       Some(&kvs[1].0),
-                       false,
-                       2).is_empty());
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), val)
+                        .map_err(|e| {
+                            panic!("'set' returned {}", e);
+                        })
+                        .map(move |_| {
+                            node.exists(Consistency::Consistent, key)
+                                .map_err(|e| {
+                                    panic!("'exists' for existent key returned {}", e);
+                                })
+                                .map(move |res| {
+                                    assert!(res);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
 
-        assert_eq!(vec![ kvs[0].0.clone(), kvs[1].0.clone() ],
-                   range_(&mut conn,
-                          Some(&kvs[0].0),
-                          true,
-                          Some(&kvs[1].0),
-                          true,
-                          -1));
+            executor.execute(fut).unwrap();
+        })
+    }
 
-        assert_eq!(vec![ kvs[0].0.clone() ],
-                   range_(&mut conn,
-                          Some(&kvs[0].0),
-                          true,
-                          Some(&kvs[1].0),
-                          false,
-                          -1));
+    #[test]
+    fn set_and_delete_and_exists() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
 
-        assert_eq!(vec![ kvs[1].0.clone() ],
-                   range_(&mut conn,
-                          Some(&kvs[0].0),
-                          false,
-                          Some(&kvs[1].0),
-                          true,
-                          -1));
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), val)
+                        .map_err(|e| {
+                            panic!("'set' returned {}", e);
+                        })
+                        .map(move |_| {
+                            node.delete(key.clone())
+                                .map_err(|e| {
+                                    panic!("'delete' for existent key returned {}", e);
+                                })
+                                .map(move |_| {
+                                    node.exists(Consistency::Consistent, key)
+                                        .map_err(|e| {
+                                            panic!("exists for removed key returned {}", e);
+                                        })
+                                        .map(|val| {
+                                            assert!(!val);
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten();
 
-        assert_eq!(vec![ kvs[0].0.clone(), kvs[1].0.clone() ],
-                   range_(&mut conn,
-                          None,
-                          false,
-                          None,
-                          false,
-                          -1));
+            executor.execute(fut).unwrap();
+        })
+    }
 
-        assert_eq!(vec![ kvs[0].0.clone() ],
-                   range_(&mut conn,
-                          None,
-                          false,
-                          None,
-                          false,
-                          1));
+    #[test]
+    fn test_and_set_inexistent_failure() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let old = BytesMut::from(&b"old"[..]);
+            let new = BytesMut::from(&b"new"[..]);
 
-        // there's a bug in arakoon versions that might make this one fail
-        // as it returns a list with 1 element even though the max is set
-        // to 0 - https://github.com/openvstorage/arakoon/issues/68
-        assert!(range_(&mut conn,
-                       None,
-                       false,
-                       None,
-                       false,
-                       0).is_empty());
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.test_and_set(key.clone(), Some(old), Some(new))
+                        .map_err(|e| {
+                            panic!("'test_and_set' for inexistent key yielded unexpected error {}",
+                                   e);
+                        })
+                        .map(move |res| {
+                            assert_eq!(None, res);
+                            node.exists(Consistency::Consistent, key)
+                                .map_err(|e| {
+                                    panic!("exists' returned error for inexistent key: {}", e);
+                                })
+                                .map(|val| {
+                                    assert!(!val);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_and_set_inexistent_success() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let new = BytesMut::from(&b"new"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.test_and_set(key.clone(), None, Some(new.clone()))
+                        .map_err(|e| {
+                            panic!("'test_and_set' for inexistent key yielded unexpected error {}",
+                                   e);
+                        })
+                        .map(move |res| {
+                            assert_eq!(None, res);
+                            node.get(Consistency::Consistent, key)
+                                .map_err(|e| {
+                                    panic!("exists' returned error for inexistent key: {}", e);
+                                })
+                                .map(move |val| {
+                                    assert_eq!(new, val);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_and_set_existent_success() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let old = BytesMut::from(&b"old"[..]);
+            let new = BytesMut::from(&b"new"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), old.clone())
+                        .map_err(|e| {
+                            panic!("'set' failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.test_and_set(key.clone(), Some(old.clone()), Some(new.clone()))
+                                .map_err(|e| {
+                                    panic!("'test_and_set' for existent key yielded unexpected error {}",
+                                           e);
+                                })
+                                .map(move |res| {
+                                    assert_eq!(Some(old), res);
+                                    node.get(Consistency::Consistent, key)
+                                        .map_err(|e| {
+                                            panic!("exists' returned error for inexistent key: {}", e);
+                                        })
+                                        .map(move |val| {
+                                            assert_eq!(new, val);
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_and_set_existent_failure() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let exp_old = BytesMut::from(&b"exp_old"[..]);
+            let real_old = BytesMut::from(&b"real_old"[..]);
+            let new = BytesMut::from(&b"new"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), real_old.clone())
+                        .map_err(|e| {
+                            panic!("'set' failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.test_and_set(key.clone(), Some(exp_old), Some(new))
+                                .map_err(|e| {
+                                    panic!("'test_and_set' for existent key yielded unexpected error {}",
+                                           e);
+                                })
+                                .map(move |res| {
+                                    assert_eq!(Some(real_old.clone()), res);
+                                    node.get(Consistency::Consistent, key)
+                                        .map_err(|e| {
+                                            panic!("exists' returned error for inexistent key: {}", e);
+                                        })
+                                        .map(move |val| {
+                                            assert_eq!(real_old, val);
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn sequence_assert_exists_failure() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::AssertExists{key}])
+                        .map_err(|e| {
+                            match e {
+                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                                            code),
+                                _ => panic!("sequence yielded unexpected error {}", e),
+                            }
+                        })
+                        .map(|_| {
+                            panic!("sequence unexpectedly returned success");
+                        })
+                })
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn sequence_assert_exists_success() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.set(key.clone(), val)
+                        .map_err(|e| {
+                            panic!("set failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.sequence(vec![Action::AssertExists{key}])
+                                .map_err(|e| {
+                                    panic!("Sequence[AssertExists] yielded unexpected error {}", e);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn sequence_test_and_set_failure() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Assert{key: key.clone(), value: Some(val.clone())},
+                                       Action::Set{key: key, value: val}])
+                        .map_err(|e| {
+                            match e {
+                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                                            code),
+                                _ => panic!("sequence yielded unexpected error {}", e),
+                            }
+                        })
+                        .map(|_| {
+                            panic!("sequence unexpectedly returned success");
+                        })
+                })
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn sequence_test_and_set_success() {
+        execute_test(3, |executor, cluster| {
+            let key = BytesMut::from(&b"key"[..]);
+            let val = BytesMut::from(&b"val"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Assert{key: key.clone(), value: None},
+                                       Action::Set{key: key.clone(), value: val.clone()}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.get(Consistency::Consistent, key)
+                                .map_err(|e| {
+                                    panic!("get failed: {}", e);
+                                })
+                                .map(move |res| {
+                                    assert_eq!(val, res);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn prefix_keys_failure() {
+        execute_test(3, |executor, cluster| {
+            let key1 = BytesMut::from(&b"key1"[..]);
+            let val1 = BytesMut::from(&b"val1"[..]);
+            let key2 = BytesMut::from(&b"key2"[..]);
+            let val2 = BytesMut::from(&b"val2"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                       Action::Set{key: key2.clone(), value: val2}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            let pfx = BytesMut::from(&b"no_such_prefix"[..]);
+                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+                                .map_err(|e| {
+                                    panic!("prefix_keys(0) failed: {}", e);
+                                })
+                                .map(move |vec| {
+                                    assert_eq!(0, vec.len());
+                                    node.prefix_keys(Consistency::Consistent, pfx, 10)
+                                        .map_err(|e| {
+                                            panic!("prefix_keys failed: {}", e);
+                                        })
+                                        .map(|vec| {
+                                            assert_eq!(0, vec.len());
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn prefix_keys_success() {
+        execute_test(3, |executor, cluster| {
+            let key1 = BytesMut::from(&b"key1"[..]);
+            let val1 = BytesMut::from(&b"val1"[..]);
+            let key2 = BytesMut::from(&b"key2"[..]);
+            let val2 = BytesMut::from(&b"val2"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                       Action::Set{key: key2.clone(), value: val2}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            let pfx = BytesMut::from(&b"key"[..]);
+                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+                                .map_err(|e| {
+                                    panic!("prefix_keys(0) failed: {}", e);
+                                })
+                                .map(move |vec| {
+                                    assert_eq!(0, vec.len());
+                                    node.prefix_keys(Consistency::Consistent, pfx.clone(), 1)
+                                        .map_err(|e| {
+                                            panic!("prefix_keys(1) failed: {}", e);
+                                        })
+                                        .map(move |vec| {
+                                            assert_eq!(1, vec.len());
+                                            assert_eq!(key1, vec[0]);
+                                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 10)
+                                                .map_err(|e| {
+                                                    panic!("prefix_keys(10) failed: {}", e);
+                                                })
+                                                .map(move |vec| {
+                                                    assert_eq!(2, vec.len());
+                                                    assert_eq!(key1, vec[0]);
+                                                    assert_eq!(key2, vec[1]);
+                                                })
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn range_success() {
+        execute_test(3, |executor, cluster| {
+            let key1 = BytesMut::from(&b"key1"[..]);
+            let val1 = BytesMut::from(&b"val1"[..]);
+            let key2 = BytesMut::from(&b"key2"[..]);
+            let val2 = BytesMut::from(&b"val2"[..]);
+
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                       Action::Set{key: key2.clone(), value: val2}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.range(Consistency::Consistent,
+                                       Some(key1.clone()),
+                                       true,
+                                       None,
+                                       true,
+                                       100)
+                                .map_err(|e| {
+                                    panic!("range failed: {}", e);
+                                })
+                                .map(move |vec| {
+                                    assert_eq!(2, vec.len());
+                                    assert_eq!(key1, vec[0]);
+                                    assert_eq!(key2, vec[1]);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
+
+            executor.execute(fut).unwrap();
+        })
     }
 
     #[test]
     fn range_entries() {
-        let cluster = ArakoonCluster::new(1);
-        let kvs = make_keys_and_vals(2, "key", "val");
+        execute_test(3, |executor, cluster| {
+            let key1 = BytesMut::from(&b"key1"[..]);
+            let val1 = BytesMut::from(&b"val1"[..]);
+            let key2 = BytesMut::from(&b"key2"[..]);
+            let val2 = BytesMut::from(&b"val2"[..]);
 
-        let mut conn = cluster.determine_master(60);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1.clone()},
+                                       Action::Set{key: key2.clone(), value: val2.clone()}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            node.range_entries(Consistency::Consistent,
+                                               None,
+                                               true,
+                                               Some(key2.clone()),
+                                               true,
+                                               100)
+                                .map_err(|e| {
+                                    panic!("range_entries failed: {}", e);
+                                })
+                                .map(move |vec| {
+                                    assert_eq!(2, vec.len());
+                                    assert_eq!((key1, val1), vec[0]);
+                                    assert_eq!((key2, val2), vec[1]);
+                                })
+                        })
+                })
+                .flatten()
+                .flatten();
 
-        assert!(range_entries_(&mut conn,
-                               Some(&kvs[0].0),
-                               true,
-                               Some(&kvs[0].1),
-                               true,
-                               -1).is_empty());
-
-        set_keys_and_vals(&mut conn, &kvs);
-
-        assert!(range_entries_(&mut conn,
-                               Some(&kvs[0].0),
-                               false,
-                               Some(&kvs[1].0),
-                               false,
-                               -1).is_empty());
-
-        assert_eq!(kvs,
-                   range_entries_(&mut conn,
-                                  Some(&kvs[0].0),
-                                  true,
-                                  Some(&kvs[1].0),
-                                  true,
-                                  -1).as_slice());
-
-        assert_eq!(vec![ kvs[0].clone() ],
-                   range_entries_(&mut conn,
-                                  Some(&kvs[0].0),
-                                  true,
-                                  Some(&kvs[1].0),
-                                  false,
-                                  -1));
-
-        assert_eq!(vec![ kvs[1].clone() ],
-                   range_entries_(&mut conn,
-                                  Some(&kvs[0].0),
-                                  false,
-                                  Some(&kvs[1].0),
-                                  true,
-                                  -1));
-
-        assert_eq!(kvs,
-                   range_entries_(&mut conn,
-                                  None,
-                                  false,
-                                  None,
-                                  false,
-                                  -1).as_slice());
-
-        assert_eq!(vec![ kvs[0].clone() ],
-                   range_entries_(&mut conn,
-                                  None,
-                                  false,
-                                  None,
-                                  false,
-                                  1));
-
-        assert!(range_entries_(&mut conn,
-                               None,
-                               false,
-                               None,
-                               false,
-                               0).is_empty());
-    }
-
-    #[test]
-    fn prefix_keys() {
-        let cluster = ArakoonCluster::new(1);
-        let kvs1 = make_keys_and_vals(2, "key", "val");
-        let kvs2 = make_keys_and_vals(2, "kex", "val");
-
-        let mut conn = cluster.determine_master(60);
-
-        assert!(prefix_keys_(&mut conn,
-                             "ke".as_bytes(),
-                             -1).is_empty());
-
-        set_keys_and_vals(&mut conn, &kvs1);
-        set_keys_and_vals(&mut conn, &kvs2);
-
-        let ks1 = keys(&kvs1);
-        assert_eq!(ks1,
-                   prefix_keys_(&mut conn,
-                                "key".as_bytes(),
-                                -1));
-
-        let ks2 = keys(&kvs2);
-        assert_eq!(ks2,
-                   prefix_keys_(&mut conn,
-                                "kex".as_bytes(),
-                                -1));
-
-        let mut ks = ks2.clone();
-        ks.append(&mut ks1.clone());
-
-        assert_eq!(ks,
-                   prefix_keys_(&mut conn,
-                                "ke".as_bytes(),
-                                -1));
-
-        assert_eq!(ks2,
-                   prefix_keys_(&mut conn,
-                                "ke".as_bytes(),
-                                ks2.len() as i32));
-
-        assert!(prefix_keys_(&mut conn,
-                             "ke".as_bytes(),
-                             0).is_empty());
-
-        assert!(prefix_keys_(&mut conn,
-                             "hey".as_bytes(),
-                             -1).is_empty());
+            executor.execute(fut).unwrap();
+        })
     }
 
     #[test]
     fn delete_prefix() {
-        let cluster = ArakoonCluster::new(1);
-        let kvs1 = make_keys_and_vals(2, "key", "val");
-        let kvs2 = make_keys_and_vals(2, "kex", "val");
+        execute_test(3, |executor, cluster| {
+            let key1 = BytesMut::from(&b"key1"[..]);
+            let val1 = BytesMut::from(&b"val1"[..]);
+            let key2 = BytesMut::from(&b"key2"[..]);
+            let val2 = BytesMut::from(&b"val2"[..]);
 
-        let mut conn = cluster.determine_master(60);
+            let fut = connect_to_master(cluster, executor.clone(), 30)
+                .map_err(|e| {
+                    panic!("failed to connect to master: {}", e);
+                })
+                .map(move |node| {
+                    node.sequence(vec![Action::Set{key: key1, value: val1},
+                                       Action::Set{key: key2, value: val2}])
+                        .map_err(|e| {
+                            panic!("sequence failed: {}", e);
+                        })
+                        .map(move |_| {
+                            let pfx = BytesMut::from(&b"key"[..]);
+                            node.delete_prefix(pfx.clone())
+                                .map_err(|e| {
+                                    panic!("delete_prefix failed: {}", e);
+                                })
+                                .map(move |count| {
+                                    assert_eq!(2, count);
+                                    node.prefix_keys(Consistency::Consistent, pfx, 100)
+                                        .map_err(|e| {
+                                            panic!("prefix_keys failed: {}", e);
+                                        })
+                                        .map(|vec| {
+                                            assert!(vec.is_empty());
+                                        })
+                                })
+                        })
+                })
+                .flatten()
+                .flatten()
+                .flatten();
 
-        assert_eq!(0,
-                   delete_prefix_(&mut conn,
-                                  "ke".as_bytes()));
-
-        set_keys_and_vals(&mut conn, &kvs1);
-        set_keys_and_vals(&mut conn, &kvs2);
-
-        assert_eq!(kvs1.len() as i32,
-                   delete_prefix_(&mut conn, "key".as_bytes()));
-
-        let ks2 = keys(&kvs2);
-        assert_eq!(ks2,
-                   range_(&mut conn,
-                          None,
-                          false,
-                          None,
-                          false,
-                          -1));
-
-        assert_eq!(kvs2.len() as i32,
-                   delete_prefix_(&mut conn, "".as_bytes()));
-
-        assert!(range_(&mut conn,
-                       None,
-                       false,
-                       None,
-                       false,
-                       -1).is_empty());
-    }
-
-    #[test]
-    fn test_and_set() {
-        let cluster = ArakoonCluster::new(1);
-        let kvs = make_keys_and_vals(1, "key", "val");
-        let mut conn = cluster.determine_master(60);
-
-        assert!(test_and_set_(&mut conn,
-                              &kvs[0].0,
-                              Some(&kvs[0].1),
-                              None).is_none());
-
-        set_keys_and_vals(&mut conn, &kvs);
-
-        let val = "zal".as_bytes();
-
-        assert_eq!(kvs[0].1,
-                   test_and_set_(&mut conn,
-                                 &kvs[0].0,
-                                 Some(val),
-                                 Some(val)).unwrap());
-
-        assert_eq!(kvs[0].1,
-                   test_and_set_(&mut conn,
-                                 &kvs[0].0,
-                                 Some(&kvs[0].1),
-                                 Some(val)).unwrap());
-
-        assert_eq!(val,
-                   test_and_set_(&mut conn,
-                                 &kvs[0].0,
-                                 Some(val),
-                                 None).unwrap().as_slice());
-
-        assert_eq!(false,
-                   exists_(&mut conn,
-                           &kvs[0].0));
-    }
-
-    #[test]
-    fn sequence() {
-        test_sequence(|conn, acts| { sequence_(conn, acts) })
-    }
-
-    #[test]
-    fn synced_sequence() {
-        test_sequence(|conn, acts| { synced_sequence_(conn, acts) })
+            executor.execute(fut).unwrap();
+        })
     }
 }

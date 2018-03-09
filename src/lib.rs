@@ -1,4 +1,4 @@
-// Copyright (C) 2016 Arne Redlich <arne.redlich@googlemail.com>
+// Copyright (C) 2016-2018 Arne Redlich <arne.redlich@googlemail.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -10,4 +10,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod bits;
+extern crate bytes;
+extern crate futures;
+#[macro_use] extern crate log;
+extern crate num;
+#[macro_use] extern crate num_derive;
+extern crate tokio;
+extern crate tokio_io;
+extern crate tokio_service;
+
+pub mod codec;
+pub mod client;
+pub mod llio;
+pub mod protocol;
+
+// The official client interface.
+pub use protocol::{Action, ClusterId, Consistency, ErrorCode, NodeId, Stamp};
+pub use client::{ClusterConfig, Error, Node, NodeConfig};

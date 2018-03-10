@@ -30,8 +30,9 @@ mod test {
     use rand::distributions::{Sample, Range};
     use rusty_rakoon::*;
     use std;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::ffi::{CStr, CString};
+    use std::fmt::Display;
     use std::fs::File;
     use std::io::{BufWriter, Write};
     use std::path::{Path, PathBuf};
@@ -69,12 +70,52 @@ mod test {
         "127.0.0.1".to_owned()
     }
 
-    // Singleton as tests can run in parallel. For now ports are not recycled - look into this once
-    // the number of tests grows.
+    struct PortAllocatorImpl {
+        next_port: u16,
+        cache: HashSet<u16>,
+    }
+
+    impl PortAllocatorImpl {
+        fn new(port_base: u16) -> Self {
+            PortAllocatorImpl{next_port: port_base,
+                              cache: HashSet::<u16>::new()}
+        }
+
+        fn get(&mut self) -> u16 {
+            if self.cache.is_empty() {
+                let p = self.next_port;
+                self.next_port += 1;
+                p
+            } else {
+                let p = *self.cache.iter().next().unwrap();
+                self.cache.remove(&p);
+                p
+            }
+        }
+
+        fn put(&mut self, port: u16) {
+            assert!(self.cache.insert(port))
+        }
+    }
+
+    // Singleton as tests can run in parallel.
     // Cribbed from http://stackoverflow.com/questions/27791532/how-do-i-create-a-global-mutable-singleton
     #[derive(Clone)]
-    struct PortAllocator {
-        next_port : Arc<Mutex<u16>>,
+    struct PortAllocator(Arc<Mutex<PortAllocatorImpl>>);
+
+    impl PortAllocator {
+        fn new(port_base: u16) -> Self {
+            PortAllocator(Arc::new(Mutex::new(PortAllocatorImpl::new(port_base))))
+        }
+
+        fn get(&mut self) -> u16 {
+            self.0.lock().unwrap().get()
+        }
+
+        fn put(&mut self, port: u16) {
+            self.0.lock().unwrap().put(port)
+        }
+
     }
 
     fn port_allocator() -> PortAllocator {
@@ -85,11 +126,7 @@ mod test {
             ONCE.call_once(|| {
                 let port_base = get_env_or_default("ARAKOON_PORT_BASE",
                                                    &17_000);
-                let singleton = PortAllocator {
-                    next_port : Arc::new(Mutex::new(port_base))
-                };
-
-                SINGLETON = std::mem::transmute(Box::new(singleton));
+                SINGLETON = std::mem::transmute(Box::new(PortAllocator::new(port_base)));
 
                 // free heap memory at exit
                 // This doesn't exist in stable rust yet, so we will just leak it!
@@ -107,24 +144,46 @@ mod test {
         }
     }
 
+    #[derive(Eq, Hash, PartialEq)]
+    struct Port(u16);
+
+    impl Port {
+        fn new() -> Port {
+            Port(port_allocator().get())
+        }
+    }
+
+    impl Drop for Port {
+        fn drop(&mut self) {
+            port_allocator().put(self.0)
+        }
+    }
+
+    impl Display for Port {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            self.0.fmt(f)
+        }
+    }
+
     pub struct ArakoonNode {
-        node_id : NodeId,
-        port_base : u16,
-        home : PathBuf,
-        binary : PathBuf,
-        child : Option<std::process::Child>,
+        node_id: NodeId,
+        client_port: Port,
+        messaging_port: Port,
+        home: PathBuf,
+        binary: PathBuf,
+        child: Option<std::process::Child>,
     }
 
     impl ArakoonNode {
         fn new(node_id : &NodeId,
-               port_base : u16,
                root : &PathBuf,
                binary : &PathBuf) -> ArakoonNode {
             let home = ArakoonNode::node_home(root,
                                               node_id);
             std::fs::create_dir_all(&home).unwrap();
-            ArakoonNode {node_id : node_id.clone(),
-                         port_base,
+            ArakoonNode {node_id: node_id.clone(),
+                         client_port: Port::new(),
+                         messaging_port: Port::new(),
                          home,
                          binary : binary.clone(),
                          child : None }
@@ -134,20 +193,12 @@ mod test {
             root.join(&node_id.to_string())
         }
 
-        fn client_port(&self) -> u16 {
-            self.port_base
-        }
-
-        fn messaging_port(&self) -> u16 {
-            self.port_base + 1
-        }
-
         fn config_file(&self) -> PathBuf {
             self.home.join("config")
         }
 
         fn address(&self) -> String {
-            hostname() + &":".to_owned() + &self.client_port().to_string()
+            hostname() + &":".to_owned() + &self.client_port.to_string()
         }
 
         fn config(&self) -> NodeConfig {
@@ -185,10 +236,12 @@ mod test {
                     .arg("-config")
                     .arg(self.config_file())
                     .spawn()
-                    .unwrap_or_else(|e| {panic!("failed to fork off {} as {}: {}",
-                                                self.binary.to_str().unwrap(),
-                                                self.node_id,
-                                                e)});
+                    .unwrap_or_else(|e| {
+                        panic!("failed to fork off {} as {}: {}",
+                               self.binary.to_str().unwrap(),
+                               self.node_id,
+                               e)
+                    });
                 info!("forked off process for {}: {}",
                       self.node_id,
                       c.id());
@@ -201,9 +254,9 @@ mod test {
         fn stop(&mut self) {
             if let Some(ref mut c) = self.child {
                 c.kill().unwrap(); // FIXME: sends SIGKILL which prevents an orderly shutdown
-                c.wait().unwrap_or_else(|e| {panic!("failed to wait for child {}: {}",
-                                                    c.id(),
-                                                    e); });
+                c.wait().unwrap_or_else(|e| {
+                    panic!("failed to wait for child {}: {}", c.id(), e);
+                });
             }
 
             self.child = None;
@@ -219,7 +272,6 @@ mod test {
     pub struct ArakoonCluster {
         cluster_id : ClusterId,
         home : PathBuf,
-        port_base : u16,
         nodes : BTreeMap<NodeId, ArakoonNode>,
     }
 
@@ -232,17 +284,12 @@ mod test {
 
             let cluster_id = ClusterId(uuid::Uuid::new_v4().hyphenated().to_string());
             let home = Path::new(&tempdir).join("RustyRakoonTest").join(&cluster_id.to_string());
-            let port_allocator = port_allocator();
-            let mut next_port = port_allocator.next_port.lock().unwrap();
-            let port_base = *next_port;
-            *next_port += 2 * count;
 
-            info!("setting up arakoon cluster {:?}: {} node(s), home={}, binary={}, port_base={}",
+            info!("setting up arakoon cluster {:?}: {} node(s), home={}, binary={}",
                   cluster_id,
                   count,
                   home.display(),
-                  binary,
-                  port_base);
+                  binary);
 
             if home.exists() {
                 assert!(std::fs::remove_dir_all(&home).is_ok());
@@ -250,7 +297,6 @@ mod test {
 
             let mut cluster = ArakoonCluster{cluster_id: cluster_id.clone(),
                                              home,
-                                             port_base,
                                              nodes: BTreeMap::new()};
 
             assert!(std::fs::create_dir_all(&cluster.home).is_ok());
@@ -258,7 +304,6 @@ mod test {
             for i in 0..count {
                 let node_id = NodeId("node_".to_owned() + &i.to_string());
                 let node = ArakoonNode::new(&node_id,
-                                            cluster.port_base + 2 * i,
                                             &cluster.home,
                                             &PathBuf::from(&binary));
                 cluster.nodes.insert(node_id,
@@ -307,8 +352,8 @@ mod test {
             for node in self.nodes.values() {
                 try!(writeln!(w, "[{}]", node.node_id));
                 try!(writeln!(w, "ip = {}", hostname()));
-                try!(writeln!(w, "client_port = {}", node.client_port()));
-                try!(writeln!(w, "messaging_port = {}", node.messaging_port()));
+                try!(writeln!(w, "client_port = {}", node.client_port));
+                try!(writeln!(w, "messaging_port = {}", node.messaging_port));
                 try!(writeln!(w, "log_level = debug"));
                 try!(writeln!(w, "log_dir = {}", node.home.to_str().unwrap()));
                 try!(writeln!(w, "home = {}", node.home.to_str().unwrap()));

@@ -326,37 +326,37 @@ mod test {
         }
 
         fn write_config_file(&self, node : &ArakoonNode) -> std::io::Result<()> {
-            let f = try!(File::create(node.config_file()));
+            let f = File::create(node.config_file())?;
             let mut w = BufWriter::new(f);
 
-            try!(writeln!(w, "[global]"));
-            try!(writeln!(w, "cluster_id = {}", self.cluster_id));
-            try!(write!(w, "cluster = "));
+            writeln!(w, "[global]")?;
+            writeln!(w, "cluster_id = {}", self.cluster_id)?;
+            write!(w, "cluster = ")?;
 
             let mut comma = false;
             for node in self.nodes.values() {
                 if comma {
-                    try!(write!(w, ", "));
+                    write!(w, ", ")?;
                 } else {
                     comma = true;
                 }
-                try!(write!(w, "{}", node.node_id))
+                write!(w, "{}", node.node_id)?
             }
-            try!(writeln!(w, ""));
+            writeln!(w, "")?;
 
             let (_, master) = self.nodes.iter().next().unwrap();
-            try!(writeln!(w, "master = {}", master.node_id));
-            try!(writeln!(w, "preferred_master = true"));
-            try!(writeln!(w, ""));
+            writeln!(w, "master = {}", master.node_id)?;
+            writeln!(w, "preferred_master = true")?;
+            writeln!(w, "")?;
 
             for node in self.nodes.values() {
-                try!(writeln!(w, "[{}]", node.node_id));
-                try!(writeln!(w, "ip = {}", hostname()));
-                try!(writeln!(w, "client_port = {}", node.client_port));
-                try!(writeln!(w, "messaging_port = {}", node.messaging_port));
-                try!(writeln!(w, "log_level = debug"));
-                try!(writeln!(w, "log_dir = {}", node.home.to_str().unwrap()));
-                try!(writeln!(w, "home = {}", node.home.to_str().unwrap()));
+                writeln!(w, "[{}]", node.node_id)?;
+                writeln!(w, "ip = {}", hostname())?;
+                writeln!(w, "client_port = {}", node.client_port)?;
+                writeln!(w, "messaging_port = {}", node.messaging_port)?;
+                writeln!(w, "log_level = debug")?;
+                writeln!(w, "log_dir = {}", node.home.to_str().unwrap())?;
+                writeln!(w, "home = {}", node.home.to_str().unwrap())?;
             }
 
             Ok(())

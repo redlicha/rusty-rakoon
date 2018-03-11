@@ -382,7 +382,7 @@ mod test {
 
     fn execute_test<F>(num_nodes: u16, test_fn: F)
     where
-        F: FnOnce(Rc<current_thread::TaskExecutor>, Rc<ArakoonCluster>)
+        F: FnOnce(&current_thread::TaskExecutor, Rc<ArakoonCluster>)
     {
         // ignore errors caused by multiple invocations
         drop(env_logger::try_init());
@@ -390,7 +390,7 @@ mod test {
         let cluster = Rc::new(ArakoonCluster::new(num_nodes));
 
         current_thread::run(|_| {
-            test_fn(Rc::new(current_thread::task_executor()),
+            test_fn(&current_thread::task_executor(),
                     cluster.clone())
         });
     }
@@ -426,11 +426,11 @@ mod test {
         }))
     }
 
-    fn connect_to_master<'e, E>(cluster: Rc<ArakoonCluster>,
-                                executor: Rc<E>,
-                                wait_secs: u32) -> Box<Future<Item=Rc<Node>, Error=Error> + 'e>
+    fn connect_to_master<E>(cluster: Rc<ArakoonCluster>,
+                            executor: E,
+                            wait_secs: u32) -> Box<Future<Item=Rc<Node>, Error=Error>>
     where
-        E: Executor<Box<Future<Item=(), Error=()>>> + 'e
+        E: Executor<Box<Future<Item=(), Error=()>>> + 'static
     {
         let node_configs = cluster.node_configs().clone();
         assert!(!node_configs.is_empty());
@@ -496,7 +496,7 @@ mod test {
             assert!(!node_configs.is_empty());
             let client = Rc::new(Node::connect(cluster.cluster_id.clone(),
                                                &node_configs[0],
-                                               &executor).unwrap());
+                                               executor).unwrap());
 
             executor.execute(determine_master(client.clone(), 30)
                              .then(move |res| {
@@ -528,7 +528,7 @@ mod test {
             assert!(!node_configs.is_empty());
             let client = Node::connect(cluster.cluster_id.clone(),
                                        &node_configs[0],
-                                       &executor).unwrap();
+                                       executor).unwrap();
 
             executor.execute(client.hello()
                              .then(|res| {

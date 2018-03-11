@@ -27,7 +27,6 @@ use std;
 use std::error;
 use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
-use std::rc::Rc;
 
 use tokio::net::TcpStream;
 use tokio_io::AsyncRead;
@@ -151,9 +150,9 @@ pub struct Node {
 impl Node {
     pub fn connect<E>(cluster_id: ClusterId,
                       node_config: &NodeConfig,
-                      executor: &Rc<E>) -> std::io::Result<Node>
+                      executor: &E) -> std::io::Result<Node>
     where
-        E : Executor<Box<Future<Item=(), Error=()>>>,
+        E: Executor<Box<Future<Item=(), Error=()>>> + 'static,
     {
         let (tx, rx) = mpsc::channel(1);
         let node_id = node_config.node_id.clone();

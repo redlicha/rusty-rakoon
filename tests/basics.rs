@@ -443,7 +443,7 @@ mod test {
         debug!("connecting to {}", node_configs[idx].node_id);
         match Node::connect(cluster.cluster_id.clone(),
                             &node_configs[idx],
-                            executor.clone()) {
+                            &executor) {
             Ok(node) => {
                 let node = Rc::new(node);
                 let fut = determine_master(node.clone(),
@@ -463,7 +463,7 @@ mod test {
                                         debug!("re-connecting to {}", node_config.node_id);
                                         match Node::connect(cluster.cluster_id.clone(),
                                                             node_config,
-                                                            executor.clone()) {
+                                                            &executor) {
                                             Ok(node) => return Ok(Rc::new(node)),
                                             Err(e) => return Err(Error::IoError(e)),
                                         }
@@ -496,7 +496,7 @@ mod test {
             assert!(!node_configs.is_empty());
             let client = Rc::new(Node::connect(cluster.cluster_id.clone(),
                                                &node_configs[0],
-                                               executor.clone()).unwrap());
+                                               &executor).unwrap());
 
             executor.execute(determine_master(client.clone(), 30)
                              .then(move |res| {
@@ -528,7 +528,7 @@ mod test {
             assert!(!node_configs.is_empty());
             let client = Node::connect(cluster.cluster_id.clone(),
                                        &node_configs[0],
-                                       executor.clone()).unwrap();
+                                       &executor).unwrap();
 
             executor.execute(client.hello()
                              .then(|res| {

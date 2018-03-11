@@ -18,7 +18,7 @@ use codec::*;
 use futures::{Sink, Stream};
 use futures::future::{err, Executor, Future, ok};
 use futures::stream::{SplitSink, SplitStream};
-use futures::sync::{oneshot, mpsc};
+use futures::sync::{mpsc, oneshot};
 use futures::sync::mpsc::Receiver;
 
 use protocol::{Action, ClusterId, Consistency, ErrorCode, ErrorResponse, NodeId, Request, Response};
@@ -151,7 +151,7 @@ pub struct Node {
 impl Node {
     pub fn connect<E>(cluster_id: ClusterId,
                       node_config: &NodeConfig,
-                      executor: Rc<E>) -> std::io::Result<Node>
+                      executor: &Rc<E>) -> std::io::Result<Node>
     where
         E : Executor<Box<Future<Item=(), Error=()>>>,
     {

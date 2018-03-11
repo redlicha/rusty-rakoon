@@ -382,7 +382,7 @@ mod test {
 
     fn execute_test<F>(num_nodes: u16, test_fn: F)
     where
-        F: Fn(Rc<current_thread::TaskExecutor>, Rc<ArakoonCluster>)
+        F: FnOnce(Rc<current_thread::TaskExecutor>, Rc<ArakoonCluster>)
     {
         // ignore errors caused by multiple invocations
         drop(env_logger::try_init());
@@ -539,722 +539,536 @@ mod test {
         })
     }
 
-    // TODO: factor out the connect_to_master part - but so far I cannot seem
-    // to get the lifetime of F right:
-    // fn execute_test_with_node<F>(node: Rc<Node>, fun: F)
-    // where
-    //     F: Fn(Rc<Node>) -> Box<Future<Item=(), Error=()>>
-    // {
-    //     execute_test(3, move |executor, cluster| {
-    //         let fut = connect_to_master(cluster, executor.clone(), 30)
-    //             .map_err(|e| {
-    //                 panic!("failed to connect to master: {}", e);
-    //             })
-    //             .map(fun).flatten();
-
-    //         executor.execute(fut).unwrap();
-    //     })
-    // }
-    //
-    // yields
-    //
-    //     error[E0310]: the parameter type `F` may not live long enough
-    //    --> tests/basics.rs:510:22
-    //     |
-    // 499 |     fn execute_test_with_node<F>(node: Rc<Node>, fun: F)
-    //     |                               - help: consider adding an explicit lifetime bound `F: 'static`...
-    // ...
-    // 510 |             executor.execute(fut).unwrap();
-    //     |                      ^^^^^^^
-    //     |
-    // note: ...so that the type `futures::Flatten<futures::Map<futures::MapErr<std::boxed::Box<futures::Future<Error=rusty_rakoon::Error, Item=std::rc::Rc<rusty_rakoon::Node>>>, [closure@tests/basics.rs:505:26: 507:18]>, F>>` will meet its required lifetime bounds
-    //    --> tests/basics.rs:510:22
-    //     |
-    // 510 |             executor.execute(fut).unwrap();
-    //     |                      ^^^^^^^
-    //
-    #[test]
-    fn exists_inexistent() {
-        execute_test(3, |executor, cluster| {
-            let key = BytesMut::from(&b"key"[..]);
+    fn test_with_master<F>(fun: F)
+    where
+        F: FnOnce(Rc<Node>) -> Box<Future<Item=(), Error=()>> + 'static
+    {
+        execute_test(3, move |executor, cluster| {
             let fut = connect_to_master(cluster, executor.clone(), 30)
                 .map_err(|e| {
                     panic!("failed to connect to master: {}", e);
                 })
-                .map(|node| {
-                    node.exists(Consistency::Consistent, key)
-                        .map_err(|e| {
-                            panic!("'exists' failed: {}", e);
-                        })
-                        .map(|res| {
-                            assert_eq!(false,
-                                       res);
-                        })
-                })
+                .map(move |node| {fun(node.clone())})
                 .flatten();
 
             executor.execute(fut).unwrap();
+        })
+    }
+
+    #[test]
+    fn exists_inexistent() {
+        test_with_master(move |master| {
+            let key = BytesMut::from(&b"key"[..]);
+
+            Box::new(master.exists(Consistency::Consistent, key)
+                     .map_err(|e| {
+                         panic!("'exists' failed: {}", e);
+                     })
+                     .map(|res| {
+                         assert_eq!(false,
+                                    res);
+                     }))
         })
     }
 
     #[test]
     fn get_inexistent() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(|node| {
-                    node.get(Consistency::Consistent, key)
-                        .map(|res| {
-                            panic!("'get' returned something for an inexistent key: {:?}",
-                                   res);
-                        })
-                        .map_err(|e| {
-                            match e {
-                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                                            code),
-                                _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
-                                            e),
-                            }
-                        })
-                })
-                .flatten();
 
-            executor.execute(fut).unwrap();
+            Box::new(master.get(Consistency::Consistent, key)
+                     .map(|res| {
+                         panic!("'get' returned something for an inexistent key: {:?}",
+                                res);
+                     })
+                     .map_err(|e| {
+                         match e {
+                             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                                         code),
+                             _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
+                                         e),
+                         }
+                     }))
         })
     }
 
     #[test]
     fn delete_inexistent() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(|node| {
-                    node.delete(key)
-                        .map(|_| {
-                            panic!("'delete' returned successfully for an inexistent key");
-                        })
-                        .map_err(|e| {
-                            match e {
-                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                                            code),
-                                _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
-                                            e),
-                            }
-                        })
-                })
-                .flatten();
 
-            executor.execute(fut).unwrap();
+            Box::new(master.delete(key)
+                     .map(|_| {
+                         panic!("'delete' returned successfully for an inexistent key");
+                     })
+                     .map_err(|e| {
+                         match e {
+                             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                                         code),
+                             _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
+                                         e),
+                         }
+                     }))
         })
     }
 
     #[test]
     fn set_and_get() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), val.clone())
-                        .map_err(|e| {
-                            panic!("'set' returned {}", e);
-                        })
-                        .map(move |_| {
-                            node.get(Consistency::Consistent, key)
-                                .map_err(|e| {
-                                    panic!("'get' for existent key returned {}", e);
-                                })
-                                .map(move |res| {
-                                    assert_eq!(val, res);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), val.clone())
+                     .map_err(|e| {
+                         panic!("'set' returned {}", e);
+                     })
+                     .map(move |_| {
+                         master.get(Consistency::Consistent, key)
+                             .map_err(|e| {
+                                 panic!("'get' for existent key returned {}", e);
+                             })
+                             .map(move |res| {
+                                 assert_eq!(val, res);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn set_and_exists() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), val)
-                        .map_err(|e| {
-                            panic!("'set' returned {}", e);
-                        })
-                        .map(move |_| {
-                            node.exists(Consistency::Consistent, key)
-                                .map_err(|e| {
-                                    panic!("'exists' for existent key returned {}", e);
-                                })
-                                .map(move |res| {
-                                    assert!(res);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), val)
+                     .map_err(|e| {
+                         panic!("'set' returned {}", e);
+                     })
+                     .map(move |_| {
+                         master.exists(Consistency::Consistent, key)
+                             .map_err(|e| {
+                                 panic!("'exists' for existent key returned {}", e);
+                             })
+                             .map(move |res| {
+                                 assert!(res);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn set_and_delete_and_exists() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), val)
-                        .map_err(|e| {
-                            panic!("'set' returned {}", e);
-                        })
-                        .map(move |_| {
-                            node.delete(key.clone())
-                                .map_err(|e| {
-                                    panic!("'delete' for existent key returned {}", e);
-                                })
-                                .map(move |_| {
-                                    node.exists(Consistency::Consistent, key)
-                                        .map_err(|e| {
-                                            panic!("exists for removed key returned {}", e);
-                                        })
-                                        .map(|val| {
-                                            assert!(!val);
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), val)
+                     .map_err(|e| {
+                         panic!("'set' returned {}", e);
+                     })
+                     .map(move |_| {
+                         master.delete(key.clone())
+                             .map_err(|e| {
+                                 panic!("'delete' for existent key returned {}", e);
+                             })
+                             .map(move |_| {
+                                 master.exists(Consistency::Consistent, key)
+                                     .map_err(|e| {
+                                         panic!("exists for removed key returned {}", e);
+                                     })
+                                     .map(|val| {
+                                         assert!(!val);
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten())
         })
     }
 
     #[test]
     fn test_and_set_inexistent_failure() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let old = BytesMut::from(&b"old"[..]);
             let new = BytesMut::from(&b"new"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.test_and_set(key.clone(), Some(old), Some(new))
-                        .map_err(|e| {
-                            panic!("'test_and_set' for inexistent key yielded unexpected error {}",
-                                   e);
-                        })
-                        .map(move |res| {
-                            assert_eq!(None, res);
-                            node.exists(Consistency::Consistent, key)
-                                .map_err(|e| {
-                                    panic!("exists' returned error for inexistent key: {}", e);
-                                })
-                                .map(|val| {
-                                    assert!(!val);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.test_and_set(key.clone(), Some(old), Some(new))
+                     .map_err(|e| {
+                         panic!("'test_and_set' for inexistent key yielded unexpected error {}",
+                                e);
+                     })
+                     .map(move |res| {
+                         assert_eq!(None, res);
+                         master.exists(Consistency::Consistent, key)
+                             .map_err(|e| {
+                                 panic!("exists' returned error for inexistent key: {}", e);
+                             })
+                             .map(|val| {
+                                 assert!(!val);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn test_and_set_inexistent_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let new = BytesMut::from(&b"new"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.test_and_set(key.clone(), None, Some(new.clone()))
-                        .map_err(|e| {
-                            panic!("'test_and_set' for inexistent key yielded unexpected error {}",
-                                   e);
-                        })
-                        .map(move |res| {
-                            assert_eq!(None, res);
-                            node.get(Consistency::Consistent, key)
-                                .map_err(|e| {
-                                    panic!("exists' returned error for inexistent key: {}", e);
-                                })
-                                .map(move |val| {
-                                    assert_eq!(new, val);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.test_and_set(key.clone(), None, Some(new.clone()))
+                     .map_err(|e| {
+                         panic!("'test_and_set' for inexistent key yielded unexpected error {}",
+                                e);
+                     })
+                     .map(move |res| {
+                         assert_eq!(None, res);
+                         master.get(Consistency::Consistent, key)
+                             .map_err(|e| {
+                                 panic!("exists' returned error for inexistent key: {}", e);
+                             })
+                             .map(move |val| {
+                                 assert_eq!(new, val);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn test_and_set_existent_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let old = BytesMut::from(&b"old"[..]);
             let new = BytesMut::from(&b"new"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), old.clone())
-                        .map_err(|e| {
-                            panic!("'set' failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.test_and_set(key.clone(), Some(old.clone()), Some(new.clone()))
-                                .map_err(|e| {
-                                    panic!("'test_and_set' for existent key yielded unexpected error {}",
-                                           e);
-                                })
-                                .map(move |res| {
-                                    assert_eq!(Some(old), res);
-                                    node.get(Consistency::Consistent, key)
-                                        .map_err(|e| {
-                                            panic!("exists' returned error for inexistent key: {}", e);
-                                        })
-                                        .map(move |val| {
-                                            assert_eq!(new, val);
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), old.clone())
+                     .map_err(|e| {
+                         panic!("'set' failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.test_and_set(key.clone(), Some(old.clone()), Some(new.clone()))
+                             .map_err(|e| {
+                                 panic!("'test_and_set' for existent key yielded unexpected error {}",
+                                        e);
+                             })
+                             .map(move |res| {
+                                 assert_eq!(Some(old), res);
+                                 master.get(Consistency::Consistent, key)
+                                     .map_err(|e| {
+                                         panic!("exists' returned error for inexistent key: {}", e);
+                                     })
+                                     .map(move |val| {
+                                         assert_eq!(new, val);
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten())
         })
     }
 
     #[test]
     fn test_and_set_existent_failure() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let exp_old = BytesMut::from(&b"exp_old"[..]);
             let real_old = BytesMut::from(&b"real_old"[..]);
             let new = BytesMut::from(&b"new"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), real_old.clone())
-                        .map_err(|e| {
-                            panic!("'set' failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.test_and_set(key.clone(), Some(exp_old), Some(new))
-                                .map_err(|e| {
-                                    panic!("'test_and_set' for existent key yielded unexpected error {}",
-                                           e);
-                                })
-                                .map(move |res| {
-                                    assert_eq!(Some(real_old.clone()), res);
-                                    node.get(Consistency::Consistent, key)
-                                        .map_err(|e| {
-                                            panic!("exists' returned error for inexistent key: {}", e);
-                                        })
-                                        .map(move |val| {
-                                            assert_eq!(real_old, val);
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), real_old.clone())
+                     .map_err(|e| {
+                         panic!("'set' failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.test_and_set(key.clone(), Some(exp_old), Some(new))
+                             .map_err(|e| {
+                                 panic!("'test_and_set' for existent key yielded unexpected error {}",
+                                        e);
+                             })
+                             .map(move |res| {
+                                 assert_eq!(Some(real_old.clone()), res);
+                                 master.get(Consistency::Consistent, key)
+                                     .map_err(|e| {
+                                         panic!("exists' returned error for inexistent key: {}", e);
+                                     })
+                                     .map(move |val| {
+                                         assert_eq!(real_old, val);
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten())
         })
     }
 
     #[test]
     fn sequence_assert_exists_failure() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::AssertExists{key}])
-                        .map_err(|e| {
-                            match e {
-                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                                            code),
-                                _ => panic!("sequence yielded unexpected error {}", e),
-                            }
-                        })
-                        .map(|_| {
-                            panic!("sequence unexpectedly returned success");
-                        })
-                })
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::AssertExists{key}])
+                     .map_err(|e| {
+                         match e {
+                             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                                         code),
+                             _ => panic!("sequence yielded unexpected error {}", e),
+                         }
+                     })
+                     .map(|_| {
+                         panic!("sequence unexpectedly returned success");
+                     }))
         })
     }
 
     #[test]
     fn sequence_assert_exists_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.set(key.clone(), val)
-                        .map_err(|e| {
-                            panic!("set failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.sequence(vec![Action::AssertExists{key}])
-                                .map_err(|e| {
-                                    panic!("Sequence[AssertExists] yielded unexpected error {}", e);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.set(key.clone(), val)
+                     .map_err(|e| {
+                         panic!("set failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.sequence(vec![Action::AssertExists{key}])
+                             .map_err(|e| {
+                                 panic!("Sequence[AssertExists] yielded unexpected error {}", e);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn sequence_test_and_set_failure() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Assert{key: key.clone(), value: Some(val.clone())},
-                                       Action::Set{key: key, value: val}])
-                        .map_err(|e| {
-                            match e {
-                                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                                            code),
-                                _ => panic!("sequence yielded unexpected error {}", e),
-                            }
-                        })
-                        .map(|_| {
-                            panic!("sequence unexpectedly returned success");
-                        })
-                })
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Assert{key: key.clone(), value: Some(val.clone())},
+                                          Action::Set{key, value: val}])
+                     .map_err(|e| {
+                         match e {
+                             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                                         code),
+                             _ => panic!("sequence yielded unexpected error {}", e),
+                         }
+                     })
+                     .map(|_| {
+                         panic!("sequence unexpectedly returned success");
+                     }))
         })
     }
 
     #[test]
     fn sequence_test_and_set_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key = BytesMut::from(&b"key"[..]);
             let val = BytesMut::from(&b"val"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Assert{key: key.clone(), value: None},
-                                       Action::Set{key: key.clone(), value: val.clone()}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.get(Consistency::Consistent, key)
-                                .map_err(|e| {
-                                    panic!("get failed: {}", e);
-                                })
-                                .map(move |res| {
-                                    assert_eq!(val, res);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Assert{key: key.clone(), value: None},
+                                          Action::Set{key: key.clone(), value: val.clone()}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.get(Consistency::Consistent, key)
+                             .map_err(|e| {
+                                 panic!("get failed: {}", e);
+                             })
+                             .map(move |res| {
+                                 assert_eq!(val, res);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn prefix_keys_failure() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key1 = BytesMut::from(&b"key1"[..]);
             let val1 = BytesMut::from(&b"val1"[..]);
             let key2 = BytesMut::from(&b"key2"[..]);
             let val2 = BytesMut::from(&b"val2"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                       Action::Set{key: key2.clone(), value: val2}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            let pfx = BytesMut::from(&b"no_such_prefix"[..]);
-                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
-                                .map_err(|e| {
-                                    panic!("prefix_keys(0) failed: {}", e);
-                                })
-                                .map(move |vec| {
-                                    assert_eq!(0, vec.len());
-                                    node.prefix_keys(Consistency::Consistent, pfx, 10)
-                                        .map_err(|e| {
-                                            panic!("prefix_keys failed: {}", e);
-                                        })
-                                        .map(|vec| {
-                                            assert_eq!(0, vec.len());
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                          Action::Set{key: key2.clone(), value: val2}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         let pfx = BytesMut::from(&b"no_such_prefix"[..]);
+                         master.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+                             .map_err(|e| {
+                                 panic!("prefix_keys(0) failed: {}", e);
+                             })
+                             .map(move |vec| {
+                                 assert_eq!(0, vec.len());
+                                 master.prefix_keys(Consistency::Consistent, pfx, 10)
+                                     .map_err(|e| {
+                                         panic!("prefix_keys failed: {}", e);
+                                     })
+                                     .map(|vec| {
+                                         assert_eq!(0, vec.len());
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten())
         })
     }
 
     #[test]
     fn prefix_keys_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key1 = BytesMut::from(&b"key1"[..]);
             let val1 = BytesMut::from(&b"val1"[..]);
             let key2 = BytesMut::from(&b"key2"[..]);
             let val2 = BytesMut::from(&b"val2"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                       Action::Set{key: key2.clone(), value: val2}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            let pfx = BytesMut::from(&b"key"[..]);
-                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
-                                .map_err(|e| {
-                                    panic!("prefix_keys(0) failed: {}", e);
-                                })
-                                .map(move |vec| {
-                                    assert_eq!(0, vec.len());
-                                    node.prefix_keys(Consistency::Consistent, pfx.clone(), 1)
-                                        .map_err(|e| {
-                                            panic!("prefix_keys(1) failed: {}", e);
-                                        })
-                                        .map(move |vec| {
-                                            assert_eq!(1, vec.len());
-                                            assert_eq!(key1, vec[0]);
-                                            node.prefix_keys(Consistency::Consistent, pfx.clone(), 10)
-                                                .map_err(|e| {
-                                                    panic!("prefix_keys(10) failed: {}", e);
-                                                })
-                                                .map(move |vec| {
-                                                    assert_eq!(2, vec.len());
-                                                    assert_eq!(key1, vec[0]);
-                                                    assert_eq!(key2, vec[1]);
-                                                })
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                          Action::Set{key: key2.clone(), value: val2}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         let pfx = BytesMut::from(&b"key"[..]);
+                         master.prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+                             .map_err(|e| {
+                                 panic!("prefix_keys(0) failed: {}", e);
+                             })
+                             .map(move |vec| {
+                                 assert_eq!(0, vec.len());
+                                 master.prefix_keys(Consistency::Consistent, pfx.clone(), 1)
+                                     .map_err(|e| {
+                                         panic!("prefix_keys(1) failed: {}", e);
+                                     })
+                                     .map(move |vec| {
+                                         assert_eq!(1, vec.len());
+                                         assert_eq!(key1, vec[0]);
+                                         master.prefix_keys(Consistency::Consistent, pfx.clone(), 10)
+                                             .map_err(|e| {
+                                                 panic!("prefix_keys(10) failed: {}", e);
+                                             })
+                                             .map(move |vec| {
+                                                 assert_eq!(2, vec.len());
+                                                 assert_eq!(key1, vec[0]);
+                                                 assert_eq!(key2, vec[1]);
+                                             })
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten()
+                     .flatten())
         })
     }
 
     #[test]
     fn range_success() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key1 = BytesMut::from(&b"key1"[..]);
             let val1 = BytesMut::from(&b"val1"[..]);
             let key2 = BytesMut::from(&b"key2"[..]);
             let val2 = BytesMut::from(&b"val2"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                       Action::Set{key: key2.clone(), value: val2}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.range(Consistency::Consistent,
-                                       Some(key1.clone()),
-                                       true,
-                                       None,
-                                       true,
-                                       100)
-                                .map_err(|e| {
-                                    panic!("range failed: {}", e);
-                                })
-                                .map(move |vec| {
-                                    assert_eq!(2, vec.len());
-                                    assert_eq!(key1, vec[0]);
-                                    assert_eq!(key2, vec[1]);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                                          Action::Set{key: key2.clone(), value: val2}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.range(Consistency::Consistent,
+                                      Some(key1.clone()),
+                                      true,
+                                      None,
+                                      true,
+                                      100)
+                             .map_err(|e| {
+                                 panic!("range failed: {}", e);
+                             })
+                             .map(move |vec| {
+                                 assert_eq!(2, vec.len());
+                                 assert_eq!(key1, vec[0]);
+                                 assert_eq!(key2, vec[1]);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn range_entries() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key1 = BytesMut::from(&b"key1"[..]);
             let val1 = BytesMut::from(&b"val1"[..]);
             let key2 = BytesMut::from(&b"key2"[..]);
             let val2 = BytesMut::from(&b"val2"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Set{key: key1.clone(), value: val1.clone()},
-                                       Action::Set{key: key2.clone(), value: val2.clone()}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            node.range_entries(Consistency::Consistent,
-                                               None,
-                                               true,
-                                               Some(key2.clone()),
-                                               true,
-                                               100)
-                                .map_err(|e| {
-                                    panic!("range_entries failed: {}", e);
-                                })
-                                .map(move |vec| {
-                                    assert_eq!(2, vec.len());
-                                    assert_eq!((key1, val1), vec[0]);
-                                    assert_eq!((key2, val2), vec[1]);
-                                })
-                        })
-                })
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Set{key: key1.clone(), value: val1.clone()},
+                                          Action::Set{key: key2.clone(), value: val2.clone()}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         master.range_entries(Consistency::Consistent,
+                                              None,
+                                              true,
+                                              Some(key2.clone()),
+                                              true,
+                                              100)
+                             .map_err(|e| {
+                                 panic!("range_entries failed: {}", e);
+                             })
+                             .map(move |vec| {
+                                 assert_eq!(2, vec.len());
+                                 assert_eq!((key1, val1), vec[0]);
+                                 assert_eq!((key2, val2), vec[1]);
+                             })
+                     })
+                     .flatten())
         })
     }
 
     #[test]
     fn delete_prefix() {
-        execute_test(3, |executor, cluster| {
+        test_with_master(move |master| {
             let key1 = BytesMut::from(&b"key1"[..]);
             let val1 = BytesMut::from(&b"val1"[..]);
             let key2 = BytesMut::from(&b"key2"[..]);
             let val2 = BytesMut::from(&b"val2"[..]);
 
-            let fut = connect_to_master(cluster, executor.clone(), 30)
-                .map_err(|e| {
-                    panic!("failed to connect to master: {}", e);
-                })
-                .map(move |node| {
-                    node.sequence(vec![Action::Set{key: key1, value: val1},
-                                       Action::Set{key: key2, value: val2}])
-                        .map_err(|e| {
-                            panic!("sequence failed: {}", e);
-                        })
-                        .map(move |_| {
-                            let pfx = BytesMut::from(&b"key"[..]);
-                            node.delete_prefix(pfx.clone())
-                                .map_err(|e| {
-                                    panic!("delete_prefix failed: {}", e);
-                                })
-                                .map(move |count| {
-                                    assert_eq!(2, count);
-                                    node.prefix_keys(Consistency::Consistent, pfx, 100)
-                                        .map_err(|e| {
-                                            panic!("prefix_keys failed: {}", e);
-                                        })
-                                        .map(|vec| {
-                                            assert!(vec.is_empty());
-                                        })
-                                })
-                        })
-                })
-                .flatten()
-                .flatten()
-                .flatten();
-
-            executor.execute(fut).unwrap();
+            Box::new(master.sequence(vec![Action::Set{key: key1, value: val1},
+                                          Action::Set{key: key2, value: val2}])
+                     .map_err(|e| {
+                         panic!("sequence failed: {}", e);
+                     })
+                     .map(move |_| {
+                         let pfx = BytesMut::from(&b"key"[..]);
+                         master.delete_prefix(pfx.clone())
+                             .map_err(|e| {
+                                 panic!("delete_prefix failed: {}", e);
+                             })
+                             .map(move |count| {
+                                 assert_eq!(2, count);
+                                 master.prefix_keys(Consistency::Consistent, pfx, 100)
+                                     .map_err(|e| {
+                                         panic!("prefix_keys failed: {}", e);
+                                     })
+                                     .map(|vec| {
+                                         assert!(vec.is_empty());
+                                     })
+                             })
+                     })
+                     .flatten()
+                     .flatten())
         })
     }
 }

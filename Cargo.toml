@@ -5,19 +5,20 @@ authors = ["Arne Redlich <arne.redlich@googlemail.com>"]
 license = "Apache 2.0"
 
 [dependencies]
-byteorder = "*"
-bytes = "*"
+byteorder = "1.2"
+bytes = "0.4"
 futures = "0.1"
-libc = "*"
-log = "*"
-num = "*"
-num-derive = "*"
+libc = "0.2"
+log = "0.3"
+num = "0.1"
+num-traits = "0.1"
+num-derive = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
-tokio-service = "*"
+tokio-service = "0.1"
 tokio-timer = "0.1"
 
 [dev-dependencies]
-uuid = { version = "*", features = ["v4"] }
+uuid = { version = "0.6", features = ["v4"] }
 env_logger = "*"
-rand = "*"
+rand = "0.3"

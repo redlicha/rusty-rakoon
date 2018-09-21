@@ -29,8 +29,7 @@ use std::fmt::Display;
 use std::net::{AddrParseError, SocketAddr};
 
 use tokio::net::TcpStream;
-use tokio_io::AsyncRead;
-use tokio_io::codec::Framed;
+use tokio_codec::{Decoder,Framed};
 use tokio_service::Service;
 
 #[derive(Debug)]
@@ -165,7 +164,7 @@ impl Node {
                 error!("error connecting: {:?}", e)
             })
             .map(move |tcp_stream| {
-                let (sink, stream) = tcp_stream.framed(Codec::new()).split();
+                let (sink, stream) = Codec::new().framed(tcp_stream).split();
                 sink.send(Request::Prologue{cluster_id})
                     .map_err(|e| {
                         error!("error sending prologue: {:?}", e)

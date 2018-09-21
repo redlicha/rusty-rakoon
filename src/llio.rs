@@ -27,7 +27,7 @@
 //! * move to a crate of its own?
 //! * use a distinct error type (that is convertible to `std::io::Error`)?
 //! * consider integrating this with `serde`?
-use bytes::{Buf, BufMut, BytesMut, LittleEndian};
+use bytes::{Buf, BufMut, BytesMut};
 use tokio_io::codec::{Decoder, Encoder};
 
 use std;
@@ -105,7 +105,7 @@ impl Encoder for I32Encoder {
             buf.reserve(s)
         }
 
-        buf.put_i32::<LittleEndian>(val);
+        buf.put_i32_le(val);
         Ok(())
     }
 }
@@ -130,7 +130,7 @@ impl Decoder for I32Decoder {
             buf.reserve(s);
             Ok(None)
         } else {
-            let res = Cursor::new(&mut *buf).get_i32::<LittleEndian>();
+            let res = Cursor::new(&mut *buf).get_i32_le();
             buf.split_to(s);
             Ok(Some(res))
         }
@@ -157,7 +157,7 @@ impl Encoder for I64Encoder {
             buf.reserve(s)
         }
 
-        buf.put_i64::<LittleEndian>(val);
+        buf.put_i64_le(val);
         Ok(())
     }
 }
@@ -182,7 +182,7 @@ impl Decoder for I64Decoder {
             buf.reserve(s);
             Ok(None)
         } else {
-            let res = Cursor::new(&mut *buf).get_i64::<LittleEndian>();
+            let res = Cursor::new(&mut *buf).get_i64_le();
             buf.split_to(s);
             Ok(Some(res))
         }

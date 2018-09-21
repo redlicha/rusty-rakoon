@@ -19,12 +19,13 @@ extern crate rand;
 extern crate rusty_rakoon;
 extern crate uuid;
 extern crate tokio;
+extern crate tokio_current_thread;
 
 #[cfg(test)]
 mod test {
     use bytes::BytesMut;
     use env_logger;
-    use futures::future::{Executor, err, Future, Loop, loop_fn};
+    use futures::future::{Executor, err, Future, lazy, Loop, loop_fn, ok};
     use libc;
     use rand::thread_rng;
     use rand::distributions::{Sample, Range};
@@ -39,7 +40,7 @@ mod test {
     use std::rc::Rc;
     use std::str;
     use std::sync::{Arc, Mutex, Once, ONCE_INIT};
-    use tokio::executor::current_thread;
+    use tokio_current_thread;
     use uuid;
 
     fn getenv(name : &str) -> Option<String> {
@@ -382,17 +383,18 @@ mod test {
 
     fn execute_test<F>(num_nodes: u16, test_fn: F)
     where
-        F: FnOnce(&current_thread::TaskExecutor, Rc<ArakoonCluster>)
+        F: FnOnce(&tokio_current_thread::TaskExecutor, Rc<ArakoonCluster>)
     {
         // ignore errors caused by multiple invocations
         drop(env_logger::try_init());
 
         let cluster = Rc::new(ArakoonCluster::new(num_nodes));
 
-        current_thread::run(|_| {
-            test_fn(&current_thread::task_executor(),
-                    cluster.clone())
-        });
+        assert!(tokio_current_thread::block_on_all(lazy(|| {
+            test_fn(&tokio_current_thread::TaskExecutor::current(),
+                    cluster.clone());
+            ok::<(), Error>(())
+        })).is_ok());
     }
 
     // convert this to a method on Node *after* fixing the blocking sleep

@@ -140,6 +140,23 @@ pub struct Node {
     tx: mpsc::Sender<Message>,
 }
 
+macro_rules! call {
+    ($self:ident, $req:expr, $pat:pat => $res:expr) => (
+        Box::new($self
+                 .call($req)
+                 .then(|ret| {
+                     match ret {
+                         $pat => $res,
+                         Ok(Response::Error(ErrorResponse{code, message})) =>
+                             Err(Error::ErrorResponse(code, message)),
+                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
+                                                           "server sent unexpected response".to_string())),
+                         Err(e) => Err(Error::IoError(e)),
+                     }
+                 }))
+    )
+}
+
 /// Client for a specific arakoon cluster node, implements the
 /// `tokio_service::Service` trait.
 ///
@@ -181,162 +198,73 @@ impl Node {
         }
     }
 
-    // These all follow the same pattern - use a macro.
     pub fn who_master(&self) -> Box<Future<Item=Option<NodeId>, Error=Error>> {
-        Box::new(self.call(Request::WhoMaster)
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::NodeIdOption(maybe_node_id)) => Ok(maybe_node_id),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::WhoMaster,
+              Ok(Response::NodeIdOption(maybe_node_id)) => Ok(maybe_node_id))
     }
 
     pub fn hello(&self) -> Box<Future<Item=String, Error=Error>> {
-        Box::new(self.call(Request::Hello{cluster_id: self.cluster_id.clone(),
-                                          node_id: self.node_id.clone()})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::String(s)) => Ok(s),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Hello{cluster_id: self.cluster_id.clone(),
+                             node_id: self.node_id.clone()},
+              Ok(Response::String(s)) => Ok(s))
     }
 
     pub fn exists(&self, consistency: Consistency, key: BytesMut) -> Box<Future<Item=bool, Error=Error>> {
-        Box::new(self.call(Request::Exists{consistency, key})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Bool(b)) => Ok(b),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Exists{consistency, key},
+              Ok(Response::Bool(b)) => Ok(b))
     }
 
     pub fn set(&self, key: BytesMut, value: BytesMut) -> Box<Future<Item=(), Error=Error>> {
-        Box::new(self.call(Request::Set{key, value})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Ok) => Ok(()),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Set{key, value},
+              Ok(Response::Ok) => Ok(()))
     }
 
     pub fn get(&self, consistency: Consistency, key: BytesMut) -> Box<Future<Item=BytesMut, Error=Error>> {
-        Box::new(self.call(Request::Get{consistency, key})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Data(val)) => Ok(val),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Get{consistency, key},
+              Ok(Response::Data(val)) => Ok(val))
     }
 
     pub fn delete(&self, key: BytesMut) -> Box<Future<Item=(), Error=Error>> {
-        Box::new(self.call(Request::Delete{key})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Ok) => Ok(()),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Delete{key},
+              Ok(Response::Ok) => Ok(()))
     }
 
     pub fn test_and_set(&self, key: BytesMut, old: Option<BytesMut>, new: Option<BytesMut>)
                         -> Box<Future<Item=Option<BytesMut>, Error=Error>> {
-        Box::new(self.call(Request::TestAndSet{key, old, new})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::DataOption(maybe_buf)) => Ok(maybe_buf),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::TestAndSet{key, old, new},
+              Ok(Response::DataOption(maybe_buf)) => Ok(maybe_buf))
     }
 
     pub fn sequence(&self, actions: Vec<Action>) -> Box<Future<Item=(), Error=Error>> {
-        Box::new(self.call(Request::Sequence{actions})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Ok) => Ok(()),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Sequence{actions},
+              Ok(Response::Ok) => Ok(()))
     }
 
     pub fn synced_sequence(&self, actions: Vec<Action>) -> Box<Future<Item=(), Error=Error>> {
-        Box::new(self.call(Request::SyncedSequence{actions})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Ok) => Ok(()),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::SyncedSequence{actions},
+              Ok(Response::Ok) => Ok(()))
     }
 
     pub fn prefix_keys(&self, consistency: Consistency, prefix: BytesMut, max_entries: i32)
                        -> Box<Future<Item=Vec<BytesMut>, Error=Error>> {
-        Box::new(self.call(Request::PrefixKeys{consistency, prefix, max_entries})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::DataVec(vec)) => Ok(vec),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::PrefixKeys{consistency, prefix, max_entries},
+              Ok(Response::DataVec(vec)) => Ok(vec))
     }
 
     pub fn delete_prefix(&self, prefix: BytesMut) -> Box<Future<Item=u32, Error=Error>> {
-        Box::new(self.call(Request::DeletePrefix{prefix})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::Count(n)) => Ok(n),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::DeletePrefix{prefix},
+              Ok(Response::Count(n)) => Ok(n))
     }
 
     pub fn range(&self,
@@ -346,22 +274,14 @@ impl Node {
                  last_key: Option<BytesMut>,
                  include_last: bool,
                  max_entries: i32) -> Box<Future<Item=Vec<BytesMut>, Error=Error>> {
-        Box::new(self.call(Request::Range{consistency,
-                                          first_key,
-                                          include_first,
-                                          last_key,
-                                          include_last,
-                                          max_entries})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::DataVec(vec)) => Ok(vec),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::Range{consistency,
+                             first_key,
+                             include_first,
+                             last_key,
+                             include_last,
+                             max_entries},
+              Ok(Response::DataVec(vec)) => Ok(vec))
     }
 
     pub fn range_entries(&self,
@@ -371,39 +291,22 @@ impl Node {
                          last_key: Option<BytesMut>,
                          include_last: bool,
                          max_entries: i32) -> Box<Future<Item=Vec<(BytesMut, BytesMut)>, Error=Error>> {
-        Box::new(self.call(Request::RangeEntries{consistency,
-                                                 first_key,
-                                                 include_first,
-                                                 last_key,
-                                                 include_last,
-                                                 max_entries})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::DataPairVec(vec)) => Ok(vec),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::RangeEntries{consistency,
+                                    first_key,
+                                    include_first,
+                                    last_key,
+                                    include_last,
+                                    max_entries},
+              Ok(Response::DataPairVec(vec)) => Ok(vec))
     }
 
     pub fn user_function(&self, function: String, arg: Option<BytesMut>)
                          -> Box<Future<Item=Option<BytesMut>, Error=Error>> {
-        Box::new(self.call(Request::UserFunction{function, arg})
-                 .then(|ret| {
-                     match ret {
-                         Ok(Response::DataOption(opt)) => Ok(opt),
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        call!(self,
+              Request::UserFunction{function, arg},
+              Ok(Response::DataOption(opt)) => Ok(opt))
     }
-
 }
 
 impl Service for Node {

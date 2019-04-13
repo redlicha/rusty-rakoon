@@ -98,8 +98,8 @@ type Message = (Request, oneshot::Sender<Result<Response, std::io::Error>>);
 type NodeSink = SplitSink<Framed<TcpStream, Codec>>;
 type NodeStream = SplitStream<Framed<TcpStream, Codec>>;
 
-fn dispatch(sink: NodeSink, stream: NodeStream, rx: Receiver<Message>) -> Box<Future<Item=(), Error=()>> {
-    let fut = rx.fold((sink, stream), move |(sink, stream), (req, tx)| {
+fn dispatch(sink: NodeSink, stream: NodeStream, rx: Receiver<Message>) -> impl Future<Item=(), Error=()> {
+    rx.fold((sink, stream), move |(sink, stream), (req, tx)| {
         trace!("sending request {:?}", req);
         sink.send(req)
             .map_err(|e| {
@@ -129,9 +129,7 @@ fn dispatch(sink: NodeSink, stream: NodeStream, rx: Receiver<Message>) -> Box<Fu
         error!("error dispatching requests: {:?}", e)
     }).map(|_| {
         debug!("done!");
-    });
-
-    Box::new(fut)
+    })
 }
 
 pub struct Node {
@@ -142,18 +140,18 @@ pub struct Node {
 
 macro_rules! call {
     ($self:ident, $req:expr, $pat:pat => $res:expr) => (
-        Box::new($self
-                 .call($req)
-                 .then(|ret| {
-                     match ret {
-                         $pat => $res,
-                         Ok(Response::Error(ErrorResponse{code, message})) =>
-                             Err(Error::ErrorResponse(code, message)),
-                         Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                                           "server sent unexpected response".to_string())),
-                         Err(e) => Err(Error::IoError(e)),
-                     }
-                 }))
+        $self
+            .call($req)
+            .then(|ret| {
+                match ret {
+                    $pat => $res,
+                    Ok(Response::Error(ErrorResponse{code, message})) =>
+                        Err(Error::ErrorResponse(code, message)),
+                    Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
+                                                      "server sent unexpected response".to_string())),
+                    Err(e) => Err(Error::IoError(e)),
+                }
+            })
     )
 }
 
@@ -198,70 +196,70 @@ impl Node {
         }
     }
 
-    pub fn who_master(&self) -> Box<Future<Item=Option<NodeId>, Error=Error>> {
+    pub fn who_master(&self) -> impl Future<Item=Option<NodeId>, Error=Error> {
         call!(self,
               Request::WhoMaster,
               Ok(Response::NodeIdOption(maybe_node_id)) => Ok(maybe_node_id))
     }
 
-    pub fn hello(&self) -> Box<Future<Item=String, Error=Error>> {
+    pub fn hello(&self) -> impl Future<Item=String, Error=Error> {
         call!(self,
               Request::Hello{cluster_id: self.cluster_id.clone(),
                              node_id: self.node_id.clone()},
               Ok(Response::String(s)) => Ok(s))
     }
 
-    pub fn exists(&self, consistency: Consistency, key: BytesMut) -> Box<Future<Item=bool, Error=Error>> {
+    pub fn exists(&self, consistency: Consistency, key: BytesMut) -> impl Future<Item=bool, Error=Error> {
         call!(self,
               Request::Exists{consistency, key},
               Ok(Response::Bool(b)) => Ok(b))
     }
 
-    pub fn set(&self, key: BytesMut, value: BytesMut) -> Box<Future<Item=(), Error=Error>> {
+    pub fn set(&self, key: BytesMut, value: BytesMut) -> impl Future<Item=(), Error=Error> {
         call!(self,
               Request::Set{key, value},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub fn get(&self, consistency: Consistency, key: BytesMut) -> Box<Future<Item=BytesMut, Error=Error>> {
+    pub fn get(&self, consistency: Consistency, key: BytesMut) -> impl Future<Item=BytesMut, Error=Error> {
         call!(self,
               Request::Get{consistency, key},
               Ok(Response::Data(val)) => Ok(val))
     }
 
-    pub fn delete(&self, key: BytesMut) -> Box<Future<Item=(), Error=Error>> {
+    pub fn delete(&self, key: BytesMut) -> impl Future<Item=(), Error=Error> {
         call!(self,
               Request::Delete{key},
               Ok(Response::Ok) => Ok(()))
     }
 
     pub fn test_and_set(&self, key: BytesMut, old: Option<BytesMut>, new: Option<BytesMut>)
-                        -> Box<Future<Item=Option<BytesMut>, Error=Error>> {
+                        -> impl Future<Item=Option<BytesMut>, Error=Error> {
         call!(self,
               Request::TestAndSet{key, old, new},
               Ok(Response::DataOption(maybe_buf)) => Ok(maybe_buf))
     }
 
-    pub fn sequence(&self, actions: Vec<Action>) -> Box<Future<Item=(), Error=Error>> {
+    pub fn sequence(&self, actions: Vec<Action>) -> impl Future<Item=(), Error=Error> {
         call!(self,
               Request::Sequence{actions},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub fn synced_sequence(&self, actions: Vec<Action>) -> Box<Future<Item=(), Error=Error>> {
+    pub fn synced_sequence(&self, actions: Vec<Action>) -> impl Future<Item=(), Error=Error> {
         call!(self,
               Request::SyncedSequence{actions},
               Ok(Response::Ok) => Ok(()))
     }
 
     pub fn prefix_keys(&self, consistency: Consistency, prefix: BytesMut, max_entries: i32)
-                       -> Box<Future<Item=Vec<BytesMut>, Error=Error>> {
+                       -> impl Future<Item=Vec<BytesMut>, Error=Error> {
         call!(self,
               Request::PrefixKeys{consistency, prefix, max_entries},
               Ok(Response::DataVec(vec)) => Ok(vec))
     }
 
-    pub fn delete_prefix(&self, prefix: BytesMut) -> Box<Future<Item=u32, Error=Error>> {
+    pub fn delete_prefix(&self, prefix: BytesMut) -> impl Future<Item=u32, Error=Error> {
         call!(self,
               Request::DeletePrefix{prefix},
               Ok(Response::Count(n)) => Ok(n))
@@ -273,7 +271,7 @@ impl Node {
                  include_first: bool,
                  last_key: Option<BytesMut>,
                  include_last: bool,
-                 max_entries: i32) -> Box<Future<Item=Vec<BytesMut>, Error=Error>> {
+                 max_entries: i32) -> impl Future<Item=Vec<BytesMut>, Error=Error> {
         call!(self,
               Request::Range{consistency,
                              first_key,
@@ -290,7 +288,7 @@ impl Node {
                          include_first: bool,
                          last_key: Option<BytesMut>,
                          include_last: bool,
-                         max_entries: i32) -> Box<Future<Item=Vec<(BytesMut, BytesMut)>, Error=Error>> {
+                         max_entries: i32) -> impl Future<Item=Vec<(BytesMut, BytesMut)>, Error=Error> {
         call!(self,
               Request::RangeEntries{consistency,
                                     first_key,
@@ -302,7 +300,7 @@ impl Node {
     }
 
     pub fn user_function(&self, function: String, arg: Option<BytesMut>)
-                         -> Box<Future<Item=Option<BytesMut>, Error=Error>> {
+                         -> impl Future<Item=Option<BytesMut>, Error=Error> {
         call!(self,
               Request::UserFunction{function, arg},
               Ok(Response::DataOption(opt)) => Ok(opt))

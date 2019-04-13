@@ -17,9 +17,12 @@ extern crate libc;
 #[macro_use] extern crate log;
 extern crate rand;
 extern crate rusty_rakoon;
-extern crate uuid;
 extern crate tokio;
 extern crate tokio_current_thread;
+extern crate tokio_executor;
+extern crate tokio_reactor;
+extern crate tokio_timer;
+extern crate uuid;
 
 #[cfg(test)]
 mod test {
@@ -40,7 +43,11 @@ mod test {
     use std::rc::Rc;
     use std::str;
     use std::sync::{Arc, Mutex, Once, ONCE_INIT};
-    use tokio_current_thread;
+    use std::time::{Duration, Instant};
+    use tokio_current_thread::CurrentThread;
+    use tokio_reactor::Reactor;
+    use tokio_timer::Delay;
+    use tokio_timer::timer::{self, Timer};
     use uuid;
 
     fn getenv(name : &str) -> Option<String> {
@@ -116,7 +123,6 @@ mod test {
         fn put(&mut self, port: u16) {
             self.0.lock().unwrap().put(port)
         }
-
     }
 
     fn port_allocator() -> PortAllocator {
@@ -390,42 +396,81 @@ mod test {
 
         let cluster = Rc::new(ArakoonCluster::new(num_nodes));
 
-        assert!(tokio_current_thread::block_on_all(lazy(|| {
-            test_fn(&tokio_current_thread::TaskExecutor::current(),
-                    cluster.clone());
-            ok::<(), Error>(())
-        })).is_ok());
+        // the following is cribbed from tokio/tokio/examples/manual-runtime.rs
+        let reactor = Reactor::new().unwrap();
+        let reactor_handle = reactor.handle();
+        let timer = Timer::new(reactor);
+        let timer_handle = timer.handle();
+
+        let mut executor = CurrentThread::new_with_park(timer);
+        let mut enter = tokio_executor::enter().unwrap();
+
+        tokio_reactor::with_default(&reactor_handle, &mut enter, |enter| {
+            timer::with_default(&timer_handle, enter, |enter| {
+                let mut default_executor = tokio_current_thread::TaskExecutor::current();
+                tokio_executor::with_default(&mut default_executor, enter, |enter| {
+                    let mut executor = executor.enter(enter);
+                    assert!(executor.block_on(lazy(|| {
+                        test_fn(&tokio_current_thread::TaskExecutor::current(),
+                                cluster.clone());
+                        ok::<(), Error>(())
+                    })).is_ok());
+                });
+            });
+        });
     }
 
-    // convert this to a method on Node *after* fixing the blocking sleep
+    // TODO: convert this to a method on Node
     fn determine_master(node: Rc<Node>,
-                        wait_secs: u32) -> Box<Future<Item=NodeId, Error=Error>>
+                        wait_secs: u32) -> impl Future<Item=NodeId, Error=Error>
     {
-        Box::new(loop_fn(0, move |attempt| {
-            node.who_master().then(move |res| {
-                match res {
-                    Ok(Some(node_id)) => {
-                        Ok(Loop::Break(node_id))
-                    },
-                    Ok(None) => {
-                        if attempt < wait_secs {
-                            info!("no master yet, going to sleep");
-                            std::thread::sleep(std::time::Duration::new(1, 0));
-                            Ok(Loop::Continue(attempt + 1))
-                        } else {
-                            error!("no master yet, giving up");
-                            let e = Error::IoError(std::io::Error::new(std::io::ErrorKind::Other,
-                                                                       "no master available"));
+        loop_fn(0, move |attempt| {
+            node.who_master()
+                .then(move |res| {
+                    match res {
+                        Ok(Some(node_id)) => {
+                            Ok(Loop::Break(node_id))
+                        },
+                        Ok(None) => {
+                            if attempt < wait_secs {
+                                info!("no master yet, attempt {}, wait_secs {} -> going to sleep",
+                                      attempt, wait_secs);
+                                Ok(Loop::Continue(attempt + 1))
+                            } else {
+                                error!("no master yet, attempt {}, wait_secs {} -> giving up",
+                                       attempt, wait_secs);
+                                let e = Error::IoError(std::io::Error::new(std::io::ErrorKind::Other,
+                                                                           "no master available"));
+                                Err(e)
+                            }
+                        },
+                        Err(e) => {
+                            error!("failed to determine master: {}", e);
                             Err(e)
+                        },
+                    }
+                })
+                .then(|res| {
+                    let secs = match res {
+                        Ok(Loop::Continue(_)) => {
+                            1
                         }
-                    },
-                    Err(e) => {
-                        error!("failed to determine master: {}", e);
-                        Err(e)
-                    },
-                }
-            })
-        }))
+                        _ => {
+                            0
+                        }
+                    };
+                    Delay::new(Instant::now() + Duration::from_secs(secs))
+                        .then(|r| {
+                            match r {
+                                Err(e) => {
+                                    panic!("timer error: {:?}", e)
+                                },
+                                _ => {},
+                            }
+                            res
+                        })
+                })
+        })
     }
 
     fn connect_to_master<E>(cluster: Rc<ArakoonCluster>,

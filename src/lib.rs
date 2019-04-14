@@ -10,15 +10,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate bytes;
-extern crate futures;
 #[macro_use] extern crate log;
-extern crate num;
 #[macro_use] extern crate num_derive;
-extern crate tokio;
-extern crate tokio_codec;
-extern crate tokio_io;
-extern crate tokio_service;
 
 pub mod codec;
 pub mod client;
@@ -26,5 +19,5 @@ pub mod llio;
 pub mod protocol;
 
 // The official client interface.
-pub use protocol::{Action, ClusterId, Consistency, ErrorCode, NodeId, Stamp};
-pub use client::{ClusterConfig, Error, Node, NodeConfig};
+pub use crate::protocol::{Action, ClusterId, Consistency, ErrorCode, NodeId, Stamp};
+pub use crate::client::{ClusterConfig, Error, Node, NodeConfig};

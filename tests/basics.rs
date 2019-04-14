@@ -10,19 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate bytes;
-extern crate env_logger;
-extern crate futures;
-extern crate libc;
 #[macro_use] extern crate log;
-extern crate rand;
-extern crate rusty_rakoon;
-extern crate tokio;
-extern crate tokio_current_thread;
-extern crate tokio_executor;
-extern crate tokio_reactor;
-extern crate tokio_timer;
-extern crate uuid;
 
 #[cfg(test)]
 mod test {

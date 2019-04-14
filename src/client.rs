@@ -11,17 +11,16 @@
 // limitations under the License.
 
 //! Arakoon client built on top of tokio.
-use bytes::BytesMut;
+use crate::codec::*;
+use crate::protocol::{Action, ClusterId, Consistency, ErrorCode, ErrorResponse, NodeId, Request, Response};
 
-use codec::*;
+use bytes::BytesMut;
 
 use futures::{Sink, Stream};
 use futures::future::{err, Executor, Future, ok};
 use futures::stream::{SplitSink, SplitStream};
 use futures::sync::{mpsc, oneshot};
 use futures::sync::mpsc::Receiver;
-
-use protocol::{Action, ClusterId, Consistency, ErrorCode, ErrorResponse, NodeId, Request, Response};
 
 use std;
 use std::error;

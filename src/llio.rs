@@ -216,12 +216,12 @@ where T: Clone {
 pub struct BindDecoder<T, D>
 where D: Decoder<Error=std::io::Error> {
     decoder: D,
-    fun : Box<Fn(D::Item) -> std::io::Result<Option<T>>>,
+    fun : Box<dyn Fn(D::Item) -> std::io::Result<Option<T>>>,
 }
 
 impl<T, D> BindDecoder<T, D>
 where D: Decoder<Error=std::io::Error> {
-    pub fn new(decoder: D, fun: Box<Fn(D::Item) -> std::io::Result<Option<T>>>) -> BindDecoder<T, D> {
+    pub fn new(decoder: D, fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>>>) -> BindDecoder<T, D> {
         BindDecoder{decoder, fun}
     }
 }

@@ -463,9 +463,9 @@ mod test {
 
     fn connect_to_master<E>(cluster: Rc<ArakoonCluster>,
                             executor: E,
-                            wait_secs: u32) -> Box<Future<Item=Rc<Node>, Error=Error>>
+                            wait_secs: u32) -> Box<dyn Future<Item=Rc<Node>, Error=Error>>
     where
-        E: Executor<Box<Future<Item=(), Error=()>>> + 'static
+        E: Executor<Box<dyn Future<Item=(), Error=()>>> + 'static
     {
         let node_configs = cluster.node_configs().clone();
         assert!(!node_configs.is_empty());
@@ -576,7 +576,7 @@ mod test {
 
     fn test_with_master<F>(fun: F)
     where
-        F: FnOnce(Rc<Node>) -> Box<Future<Item=(), Error=()>> + 'static
+        F: FnOnce(Rc<Node>) -> Box<dyn Future<Item=(), Error=()>> + 'static
     {
         execute_test(3, move |executor, cluster| {
             let fut = connect_to_master(cluster, executor.clone(), 30)

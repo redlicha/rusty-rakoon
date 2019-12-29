@@ -165,7 +165,7 @@ impl Node {
                       node_config: &NodeConfig,
                       executor: &E) -> std::io::Result<Node>
     where
-        E: Executor<Box<Future<Item=(), Error=()>>> + 'static,
+        E: Executor<Box<dyn Future<Item=(), Error=()>>> + 'static,
     {
         let (tx, rx) = mpsc::channel(1);
         let node_id = node_config.node_id.clone();
@@ -310,7 +310,7 @@ impl Service for Node {
     type Request = Request;
     type Response = Response;
     type Error = std::io::Error;
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
+    type Future = Box<dyn Future<Item=Self::Response, Error=Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
         let (tx, rx) = oneshot::channel();

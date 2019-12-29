@@ -30,7 +30,7 @@ mod test {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::str;
-    use std::sync::{Arc, Mutex, Once, ONCE_INIT};
+    use std::sync::{Arc, Mutex, Once};
     use std::time::{Duration, Instant};
     use tokio_current_thread::CurrentThread;
     use tokio_reactor::Reactor;
@@ -115,7 +115,7 @@ mod test {
 
     fn port_allocator() -> PortAllocator {
         static mut SINGLETON : *const PortAllocator = 0 as *const PortAllocator;
-        static ONCE : Once = ONCE_INIT;
+        static ONCE : Once = Once::new();
 
         unsafe {
             ONCE.call_once(|| {

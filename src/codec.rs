@@ -15,7 +15,7 @@ use crate::protocol::*;
 
 use bytes::BytesMut;
 use std;
-use tokio_io::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 /// Arakoon protocol on top of llio.
 
@@ -51,7 +51,7 @@ impl Encoder for ActionEncoder {
             }
             Action::UserFunction{function, arg} => {
                 i32_encoder.encode(0x7, buf)?;
-                data_encoder.encode(BytesMut::from(function), buf)?;
+                data_encoder.encode(BytesMut::from(function.as_str()), buf)?;
                 opt_encoder.encode(arg, buf)
             }
             Action::Assert{key, value} => {
@@ -94,7 +94,7 @@ fn write_prologue(cluster_id: ClusterId, buf: &mut BytesMut) -> std::io::Result<
     let mut i32_encoder = I32Encoder::new();
     i32_encoder.encode(MAGIC, buf)?;
     i32_encoder.encode(Opcode::Ping as i32, buf)?;
-    DataEncoder::new().encode(BytesMut::from(cluster_id.0), buf)?;
+    DataEncoder::new().encode(BytesMut::from(cluster_id.0.as_str()), buf)?;
     // no response expected
     Ok(Codec::SendRequest)
 }
@@ -102,8 +102,8 @@ fn write_prologue(cluster_id: ClusterId, buf: &mut BytesMut) -> std::io::Result<
 fn write_hello(cluster_id: &ClusterId, node_id: &NodeId, buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::Ping, buf)?;
     let mut encoder = DataEncoder::new();
-    encoder.encode(BytesMut::from(node_id.0.clone()), buf)?;
-    encoder.encode(BytesMut::from(cluster_id.0.clone()), buf)?;
+    encoder.encode(BytesMut::from(node_id.0.as_str()), buf)?;
+    encoder.encode(BytesMut::from(cluster_id.0.as_str()), buf)?;
     Ok(Codec::RecvStatus(Opcode::Ping))
 }
 
@@ -196,7 +196,7 @@ fn write_user_function(fun: String,
                        arg: Option<BytesMut>,
                        buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::UserFunction, buf)?;
-    DataEncoder::new().encode(BytesMut::from(fun), buf)?;
+    DataEncoder::new().encode(BytesMut::from(fun.as_str()), buf)?;
     OptionEncoder::<DataEncoder>::new(DataEncoder::new()).encode(arg, buf)?;
     Ok(Codec::RecvStatus(Opcode::UserFunction))
 }
@@ -220,6 +220,7 @@ impl Encoder for Codec {
 
     fn encode(&mut self, req: Self::Item, buf: &mut BytesMut) ->
         std::io::Result<()> {
+            trace!("req: {:?}", req);
             match *self {
                 Codec::SendRequest => (),
                 _ => panic!("wrong codec state while encoding"),

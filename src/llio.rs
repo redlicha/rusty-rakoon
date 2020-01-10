@@ -28,7 +28,7 @@
 //! * use a distinct error type (that is convertible to `std::io::Error`)?
 //! * consider integrating this with `serde`?
 use bytes::{Buf, BufMut, BytesMut};
-use tokio_io::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 use std;
 use std::io::Cursor;
@@ -79,7 +79,7 @@ impl Decoder for I8Decoder {
             Ok(None)
         } else {
             let res = Cursor::new(&mut *buf).get_i8();
-            buf.split_to(s);
+            let _ = buf.split_to(s);
             Ok(Some(res))
         }
     }
@@ -131,7 +131,7 @@ impl Decoder for I32Decoder {
             Ok(None)
         } else {
             let res = Cursor::new(&mut *buf).get_i32_le();
-            buf.split_to(s);
+            let _= buf.split_to(s);
             Ok(Some(res))
         }
     }
@@ -183,7 +183,7 @@ impl Decoder for I64Decoder {
             Ok(None)
         } else {
             let res = Cursor::new(&mut *buf).get_i64_le();
-            buf.split_to(s);
+            let _ = buf.split_to(s);
             Ok(Some(res))
         }
     }
@@ -265,7 +265,7 @@ impl Encoder for BoolEncoder {
 /// ```
 ///     extern crate bytes;
 ///     extern crate rusty_rakoon;
-///     extern crate tokio_io;
+///     extern crate tokio_util;
 ///
 ///     type I8Decoder = rusty_rakoon::llio::I8Decoder;
 ///     type BindDecoder = rusty_rakoon::llio::BindDecoder<bool, I8Decoder>;
@@ -288,7 +288,7 @@ impl Encoder for BoolEncoder {
 ///         }
 ///     }
 ///
-///     impl tokio_io::codec::Decoder for BoolDecoder {
+///     impl tokio_util::codec::Decoder for BoolDecoder {
 ///         type Item = bool;
 ///         type Error = std::io::Error;
 ///
@@ -445,9 +445,9 @@ where T: Encoder<Error = std::io::Error> {
     type Error = T::Error;
 
     fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
-        if val.is_some() {
+        if let Some(v) = val {
             BoolEncoder.encode(true, buf)?;
-            self.encoder.encode(val.unwrap(), buf)
+            self.encoder.encode(v, buf)
         } else {
             BoolEncoder.encode(false, buf)
         }

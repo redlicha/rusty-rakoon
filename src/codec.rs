@@ -1,4 +1,4 @@
-// Copyright (C) 2018-2019 Arne Redlich <arne.redlich@googlemail.com>
+// Copyright (C) 2018-2020 Arne Redlich <arne.redlich@googlemail.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.

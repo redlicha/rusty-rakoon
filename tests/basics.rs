@@ -1,4 +1,4 @@
-// Copyright (C) 2016-2019 Arne Redlich <arne.redlich@googlemail.com>
+// Copyright (C) 2016-2020 Arne Redlich <arne.redlich@googlemail.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -475,7 +475,7 @@ mod test {
         }
     }
 
-    // TODO: further reduce boilerplace - hide it behind a #[rusty_rakoon::test]
+    // TODO: further reduce boilerplate - hide it behind a #[rusty_rakoon::test]
     // attribute or something along those lines?
     #[test]
     fn setup_and_teardown() {

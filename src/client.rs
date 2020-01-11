@@ -125,7 +125,8 @@ impl ClusterConfig {
 // response back to the client.
 type Message = (Request, oneshot::Sender<Result<Response, std::io::Error>>);
 
-async fn dispatch(cluster_id: ClusterId, tcp_stream: TcpStream, mut rx: mpsc::Receiver<Message>) -> std::io::Result<()> {
+async fn dispatch(cluster_id: ClusterId, tcp_stream: TcpStream, mut rx: mpsc::Receiver<Message>) ->
+    std::io::Result<()> {
     let mut framed = Codec::new().framed(tcp_stream);
     framed.send(Request::Prologue{cluster_id}).await?;
 
@@ -188,14 +189,15 @@ impl Node {
         info!("connecting to {}", node_config.node_id);
 
         let (tx, rx) = mpsc::channel(1);
-        let tcp_stream = TcpStream::connect(&node_config.address).await?;
+        let tcp_stream = TcpStream::connect(node_config.address).await?;
         let cid = cluster_id.clone();
-        let task_handle = tokio::task::spawn_local(async move {
-            let res = dispatch(cid, tcp_stream, rx).await;
-            if let Err(ref e) = res {
-                error!("dispatch returned error: {:?}", e)
-            }
-            res
+        let task_handle = tokio::task::spawn(async move {
+            dispatch(cid, tcp_stream, rx)
+                .await
+                .map_err(|e| {
+                    error!("dispatch returned error: {:?}", e);
+                    e
+                })
         });
 
         Ok(Node{cluster_id,

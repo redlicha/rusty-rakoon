@@ -71,7 +71,7 @@ impl Encoder for ActionEncoder {
 pub enum Codec {
     SendRequest,
     RecvStatus(Opcode),
-    RecvResponse(Box<dyn Decoder<Item=Response, Error=std::io::Error>>)
+    RecvResponse(Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send>)
 }
 
 fn write_opcode(opcode: Opcode, buf: &mut BytesMut) -> std::io::Result<()> {
@@ -309,11 +309,11 @@ fn buf_to_string(buf: &BytesMut) -> std::io::Result<String> {
     }
 }
 
-fn make_ok_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_ok_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     Box::new(ReturnDecoder::<Response>::new(Response::Ok))
 }
 
-fn make_string_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_string_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         let s = buf_to_string(&val)?;
         Ok(Some(Response::String(s)))
@@ -321,7 +321,7 @@ fn make_string_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Er
     Box::new(BindDecoder::<Response, DataDecoder>::new(DataDecoder::new(), fun))
 }
 
-fn make_node_id_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_node_id_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         let res = match val {
             Some(buf) => Some(NodeId(buf_to_string(&buf)?)),
@@ -335,21 +335,21 @@ fn make_node_id_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std
     Box::new(BindDecoder::<Response, Decoder>::new(Decoder::new(DataDecoder::new()), fun))
 }
 
-fn make_bool_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_bool_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         Ok(Some(Response::Bool(val)))
     });
     Box::new(BindDecoder::<Response, BoolDecoder>::new(BoolDecoder::new(), fun))
 }
 
-fn make_data_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_data_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         Ok(Some(Response::Data(val)))
     });
     Box::new(BindDecoder::<Response, DataDecoder>::new(DataDecoder::new(), fun))
 }
 
-fn make_data_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_data_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         Ok(Some(Response::DataOption(val)))
     });
@@ -359,7 +359,7 @@ fn make_data_option_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::i
     Box::new(BindDecoder::<Response, Decoder>::new(decoder, fun))
 }
 
-fn make_data_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_data_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         Ok(Some(Response::DataVec(val)))
     });
@@ -370,7 +370,7 @@ fn make_data_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::
 
 }
 
-fn make_data_pair_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_data_pair_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         Ok(Some(Response::DataPairVec(val)))
     });
@@ -384,7 +384,7 @@ fn make_data_pair_vec_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std:
     Box::new(BindDecoder::<Response, Decoder>::new(decoder, fun))
 }
 
-fn make_count_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_count_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(|val| {
         if val < 0 {
             Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
@@ -397,7 +397,7 @@ fn make_count_rsp_decoder() -> Box<dyn Decoder<Item=Response, Error=std::io::Err
     Box::new(BindDecoder::<Response, I32Decoder>::new(I32Decoder::new(), fun))
 }
 
-fn make_ok_status_decoder(opcode: Opcode) -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_ok_status_decoder(opcode: Opcode) -> Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     match opcode {
         Opcode::Ping => make_string_rsp_decoder(),
         Opcode::WhoMaster => make_node_id_option_rsp_decoder(),
@@ -412,7 +412,8 @@ fn make_ok_status_decoder(opcode: Opcode) -> Box<dyn Decoder<Item=Response, Erro
 }
 
 // TODO: Reconsider handling of ErrorCode::UnknownErrorCode: std::io::Error instead?
-fn make_err_status_decoder(status: ErrorCode) -> Box<dyn Decoder<Item=Response, Error=std::io::Error>> {
+fn make_err_status_decoder(status: ErrorCode) ->
+    Box<dyn Decoder<Item=Response, Error=std::io::Error> + Send> {
     let fun = Box::new(move |val| {
         let msg = buf_to_string(&val)?;
         Ok(Some(Response::Error(ErrorResponse::new(status, msg))))

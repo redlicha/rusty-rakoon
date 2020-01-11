@@ -214,20 +214,20 @@ where T: Clone {
 
 /// Fun with monads: bind.
 pub struct BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> {
+where D: Decoder<Error=std::io::Error> + Send {
     decoder: D,
-    fun : Box<dyn Fn(D::Item) -> std::io::Result<Option<T>>>,
+    fun : Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>,
 }
 
 impl<T, D> BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> {
-    pub fn new(decoder: D, fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>>>) -> BindDecoder<T, D> {
+where D: Decoder<Error=std::io::Error> + Send {
+    pub fn new(decoder: D, fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>) -> BindDecoder<T, D> {
         BindDecoder{decoder, fun}
     }
 }
 
 impl<T, D> Decoder for BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> {
+where D: Decoder<Error=std::io::Error> + Send {
     type Item = T;
     type Error = D::Error;
 

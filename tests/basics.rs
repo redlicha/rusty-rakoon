@@ -16,9 +16,6 @@
 mod test {
     use bytes::BytesMut;
     use env_logger;
-    use futures::future::{
-        FutureExt,
-    };
     use libc;
     use rand::{
         thread_rng,
@@ -317,14 +314,14 @@ mod test {
                   binary);
 
             if home.exists() {
-                assert!(std::fs::remove_dir_all(&home).is_ok());
+                std::fs::remove_dir_all(&home).expect("failed to remove test directory");
             }
 
             let mut cluster = ArakoonCluster{cluster_id: cluster_id.clone(),
                                              home,
                                              nodes: BTreeMap::new()};
 
-            assert!(std::fs::create_dir_all(&cluster.home).is_ok());
+            std::fs::create_dir_all(&cluster.home).expect("failed to create test directory");
 
             for i in 0..count {
                 let node_id = NodeId("node_".to_owned() + &i.to_string());
@@ -405,20 +402,6 @@ mod test {
         }
     }
 
-    fn execute_test<F>(num_nodes: u16, test_fn: F)
-    where
-        F: FnOnce(Rc<ArakoonCluster>) -> std::pin::Pin<Box<dyn std::future::Future<Output=()>>>
-    {
-        // ignore errors caused by multiple invocations
-        drop(env_logger::try_init());
-
-        let cluster = Rc::new(ArakoonCluster::new(num_nodes));
-
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&mut rt, test_fn(cluster.clone()));
-    }
-    
     // TODO: convert this to a method on Node
     async fn determine_master(node: &mut Node,
                               wait_secs: u32) -> std::result::Result<NodeId, Error>
@@ -426,6 +409,7 @@ mod test {
         for i in 0..wait_secs {
             let res = node.who_master().await?;
             if let Some(node_id) = res {
+                info!("master is {}", node_id);
                 return Ok(node_id);
             } else {
                 info!("no master yet, attempt {}, wait_secs {} -> going to sleep",
@@ -475,558 +459,472 @@ mod test {
         }
     }
 
-    // TODO: further reduce boilerplate - hide it behind a #[rusty_rakoon::test]
-    // attribute or something along those lines?
-    #[test]
-    fn setup_and_teardown() {
-        execute_test(3, |_| { Box::pin(async {}) })
+    struct Fixture {
+        cluster: Rc<ArakoonCluster>
     }
 
-    #[test]
-    fn master() {
-        execute_test(3, |cluster| {
-            let node_configs = cluster.node_configs();
-            assert!(!node_configs.is_empty());
-            let fut = async move {
-                let mut client = Node::connect(cluster.cluster_id.clone(),
-                                               &node_configs[0]).await.unwrap();
+    impl Fixture {
+        fn new(num_nodes: u16) -> Self {
+            // ignore errors caused by multiple invocations
+            drop(env_logger::try_init());
+            Fixture {
+                cluster: Rc::new(ArakoonCluster::new(num_nodes))
+            }
+        }
 
-                let res = determine_master(&mut client, 30).await;
-                assert_eq!(node_configs[0].node_id,
-                           res.unwrap());
-            };
-
-            Box::pin(fut)
-        })
+        async fn connect_to_master(&self) -> Node {
+            connect_to_master(self.cluster.clone(), 30)
+                .await
+                .expect("failed to connect to master")
+        }
     }
 
-    #[test]
-    fn connect_master() {
-        execute_test(3, |cluster| {
-            let node_configs = cluster.node_configs();
-            assert!(!node_configs.is_empty());
-            let fut = async move {
-                let res = connect_to_master(cluster, 30).await;
-                assert_eq!(node_configs[0].node_id,
-                           res.unwrap().node_id);
-            };
-
-            Box::pin(fut)
-        });
+    #[tokio::test]
+    async fn setup_and_teardown() {
+        Fixture::new(3);
     }
 
-    #[test]
-    fn hello() {
-        execute_test(3, |cluster| {
-            let node_configs = cluster.node_configs();
-            assert!(!node_configs.is_empty());
-            let fut = async move {
-                let mut client = Node::connect(cluster.cluster_id.clone(),
-                                               &node_configs[0])
-                    .await
-                    .unwrap();
-                let res = client.hello().await;
-                assert!(res.is_ok());
-                info!("hello response: {}", res.unwrap());
-            };
+    #[tokio::test]
+    async fn master() {
+        let fixture = Fixture::new(3);
+        let cluster = &fixture.cluster;
+        let node_configs = &cluster.node_configs();
+        assert!(!node_configs.is_empty());
+        let mut client = Node::connect(cluster.cluster_id.clone(),
+                                       &node_configs[0]).await.unwrap();
 
-            Box::pin(fut)
-        })
+        let res = determine_master(&mut client, 30).await;
+        assert_eq!(node_configs[0].node_id,
+                   res.unwrap());
     }
 
-    fn test_with_master<F>(fun: F)
-    where
-        F: FnOnce(Node) -> std::pin::Pin<Box<dyn std::future::Future<Output=()>>> + 'static
-    {
-        execute_test(3, |cluster| {
-            let fut = async move {
-                let node = connect_to_master(cluster, 30)
-                    .await
-                    .expect("failed to connect to master");
-                fun(node)
-            };
-
-            Box::pin(fut.flatten())
-        })
-    }
-    
-    #[test]
-    fn exists_inexistent() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let res = master.exists(Consistency::Consistent, key).await.unwrap();
-                assert_eq!(false, res);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn connect_master() {
+        let fixture = Fixture::new(3);
+        let cluster = fixture.cluster.clone();
+        let node_configs = &cluster.node_configs();
+        assert!(!node_configs.is_empty());
+        let res = connect_to_master(cluster, 30).await;
+        assert_eq!(node_configs[0].node_id,
+                   res.unwrap().node_id);
     }
 
-    #[test]
-    fn get_inexistent() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let res = master.get(Consistency::Consistent, key).await;
-                match res {
-                    Ok(_) => panic!("'get' returned something for an inexistent key: {:?}",
-                                    res),
-                    Err(e) => match e {
-                        Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                                    code),
-                        _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
-                                    e),
-                    },
-                }
-            };
-            
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn hello() {
+        let fixture = Fixture::new(3);
+        let cluster = fixture.cluster.clone();
+        let node_configs = &cluster.node_configs();
+        assert!(!node_configs.is_empty());
+        let mut client = Node::connect(cluster.cluster_id.clone(),
+                                       &node_configs[0])
+            .await
+            .unwrap();
+        let res = client.hello().await;
+        assert!(res.is_ok());
+        info!("hello response: {}", res.unwrap());
     }
 
-    #[test]
-    fn delete_inexistent() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let res = master.delete(key).await;
-                match res {
-                    Ok(_) => panic!("'delete' returned successfully for an inexistent key: {:?}", res),
-                    Err(e) => match e {
-                        Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                                    code),
-                        _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
-                                    e),
-                    },
-                }
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn exists_inexistent() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let res = master.exists(Consistency::Consistent, key).await.unwrap();
+        assert_eq!(false, res);
     }
 
-    #[test]
-    fn set_and_get() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                master
-                    .set(key.clone(), val.clone())
-                    .await
-                    .expect("'set' returned error");
-                let res = master.get(Consistency::Consistent, key)
-                    .await
-                    .expect("'get' returned error");
-                assert_eq!(val, res);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn get_inexistent() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let res = master.get(Consistency::Consistent, key).await;
+        match res {
+            Ok(_) => panic!("'get' returned something for an inexistent key: {:?}",
+                            res),
+            Err(e) => match e {
+                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                            code),
+                _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
+                            e),
+            },
+        }
     }
 
-    #[test]
-    fn set_and_exists() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                master.set(key.clone(), val).await.expect("'set' returned error");
-                let res = master
-                    .exists(Consistency::Consistent, key)
-                    .await
-                    .expect("'exists' returned error");
-                assert_eq!(true, res);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn delete_inexistent() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let res = master.delete(key).await;
+        match res {
+            Ok(_) => panic!("'delete' returned successfully for an inexistent key: {:?}", res),
+            Err(e) => match e {
+                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
+                                                            code),
+                _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
+                            e),
+            },
+        }
     }
 
-    #[test]
-    fn set_and_delete_and_exists() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                master.set(key.clone(), val).await.expect("'set' returned error");
-                master.delete(key.clone()).await.expect("'delete' returned error");
-                let res = master.exists(Consistency::Consistent, key).await.expect("'exists' returned error");
-                assert_eq!(false, res);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn set_and_get() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        master
+            .set(key.clone(), val.clone())
+            .await
+            .expect("'set' returned error");
+        let res = master.get(Consistency::Consistent, key)
+            .await
+            .expect("'get' returned error");
+        assert_eq!(val, res);
     }
 
-    #[test]
-    fn test_and_set_inexistent_failure() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let old = BytesMut::from(&b"old"[..]);
-                let new = BytesMut::from(&b"new"[..]);
-
-                let res = master
-                    .test_and_set(key.clone(), Some(old), Some(new))
-                    .await
-                    .expect("'test_and_set' for inexistent key yielded error");
-                assert_eq!(None, res);
-                let res = master.exists(Consistency::Consistent, key)
-                    .await
-                    .expect("'exists' returned error for inexistent key");
-                assert_eq!(false, res);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn set_and_exists() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        master.set(key.clone(), val).await.expect("'set' returned error");
+        let res = master
+            .exists(Consistency::Consistent, key)
+            .await
+            .expect("'exists' returned error");
+        assert_eq!(true, res);
     }
 
-    #[test]
-    fn test_and_set_inexistent_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let new = BytesMut::from(&b"new"[..]);
-                let res = master
-                    .test_and_set(key.clone(), None, Some(new.clone()))
-                    .await
-                    .expect("'test_and_set' for inexistent key yielded error");
-                assert_eq!(None, res);
-
-                let val = master
-                    .get(Consistency::Consistent, key)
-                    .await
-                    .expect("'get' returned error");
-
-                assert_eq!(val, new);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn set_and_delete_and_exists() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        master.set(key.clone(), val).await.expect("'set' returned error");
+        master.delete(key.clone()).await.expect("'delete' returned error");
+        let res = master.exists(Consistency::Consistent, key).await.expect("'exists' returned error");
+        assert_eq!(false, res);
     }
 
-    #[test]
-    fn test_and_set_existent_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let old = BytesMut::from(&b"old"[..]);
-                let new = BytesMut::from(&b"new"[..]);
+    #[tokio::test]
+    async fn test_and_set_inexistent_failure() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let old = BytesMut::from(&b"old"[..]);
+        let new = BytesMut::from(&b"new"[..]);
 
-                master
-                    .set(key.clone(), old.clone())
-                    .await
-                    .expect("'set' failed");
-
-                let res = master
-                    .test_and_set(key.clone(), Some(old.clone()), Some(new.clone()))
-                    .await
-                    .expect("'test_and_set' for existent key yielded error");
-
-                assert_eq!(Some(old), res);
-                
-                let val = master
-                    .get(Consistency::Consistent, key)
-                    .await
-                    .expect("'get' returned error");
-                assert_eq!(new, val);
-            };
-
-            Box::pin(fut)
-        })
+        let res = master
+            .test_and_set(key.clone(), Some(old), Some(new))
+            .await
+            .expect("'test_and_set' for inexistent key yielded error");
+        assert_eq!(None, res);
+        let res = master.exists(Consistency::Consistent, key)
+            .await
+            .expect("'exists' returned error for inexistent key");
+        assert_eq!(false, res);
     }
 
-    #[test]
-    fn test_and_set_existent_failure() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let exp_old = BytesMut::from(&b"exp_old"[..]);
-                let real_old = BytesMut::from(&b"real_old"[..]);
-                let new = BytesMut::from(&b"new"[..]);
+    #[tokio::test]
+    async fn test_and_set_inexistent_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let new = BytesMut::from(&b"new"[..]);
+        let res = master
+            .test_and_set(key.clone(), None, Some(new.clone()))
+            .await
+            .expect("'test_and_set' for inexistent key yielded error");
+        assert_eq!(None, res);
 
-                master.set(key.clone(), real_old.clone())
-                    .await
-                    .expect("'set' failed");
+        let val = master
+            .get(Consistency::Consistent, key)
+            .await
+            .expect("'get' returned error");
 
-                let res = master
-                    .test_and_set(key.clone(), Some(exp_old), Some(new))
-                    .await
-                    .expect("'test_and_set' for existent key yielded error");
-
-                assert_eq!(Some(real_old.clone()), res);
-
-                let val = master
-                    .get(Consistency::Consistent, key)
-                    .await
-                    .expect("'get' returned error");
-
-                assert_eq!(real_old, val);
-            };
-
-            Box::pin(fut)
-        })
+        assert_eq!(val, new);
     }
 
-    #[test]
-    fn sequence_assert_exists_failure() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let res = master.sequence(vec![Action::AssertExists{key}]).await;
-                assert_eq!(true, res.is_err());
-                let err = res.err().unwrap();
-                match err {
-                    Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                                code),
-                    _ => panic!("sequence yielded unexpected error {}", err),
-                }
-            };
+    #[tokio::test]
+    async fn test_and_set_existent_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let old = BytesMut::from(&b"old"[..]);
+        let new = BytesMut::from(&b"new"[..]);
 
-            Box::pin(fut)
-        })
+        master
+            .set(key.clone(), old.clone())
+            .await
+            .expect("'set' failed");
+
+        let res = master
+            .test_and_set(key.clone(), Some(old.clone()), Some(new.clone()))
+            .await
+            .expect("'test_and_set' for existent key yielded error");
+
+        assert_eq!(Some(old), res);
+
+        let val = master
+            .get(Consistency::Consistent, key)
+            .await
+            .expect("'get' returned error");
+        assert_eq!(new, val);
     }
 
-    #[test]
-    fn sequence_assert_exists_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                master.set(key.clone(), val).await.expect("'set' failed");
-                master
-                    .sequence(vec![Action::AssertExists{key}])
-                    .await
-                    .expect("Sequence[AssertExists] yielded error");
-            };
+    #[tokio::test]
+    async fn test_and_set_existent_failure() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let exp_old = BytesMut::from(&b"exp_old"[..]);
+        let real_old = BytesMut::from(&b"real_old"[..]);
+        let new = BytesMut::from(&b"new"[..]);
 
-            Box::pin(fut)
-        })
+        master.set(key.clone(), real_old.clone())
+            .await
+            .expect("'set' failed");
+
+        let res = master
+            .test_and_set(key.clone(), Some(exp_old), Some(new))
+            .await
+            .expect("'test_and_set' for existent key yielded error");
+
+        assert_eq!(Some(real_old.clone()), res);
+
+        let val = master
+            .get(Consistency::Consistent, key)
+            .await
+            .expect("'get' returned error");
+
+        assert_eq!(real_old, val);
     }
 
-    #[test]
-    fn sequence_test_and_set_failure() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                let res = master
-                    .sequence(vec![Action::Assert{key: key.clone(), value: Some(val.clone())},
-                                   Action::Set{key, value: val}])
-                    .await;
-                assert_eq!(true, res.is_err());
-                let err = res.err().unwrap();
-                match err {
-                    Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                                code),
-                    _ => panic!("sequence yielded unexpected error {}", err),
-                }
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn sequence_assert_exists_failure() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let res = master.sequence(vec![Action::AssertExists{key}]).await;
+        assert_eq!(true, res.is_err());
+        let err = res.err().unwrap();
+        match err {
+            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                        code),
+            _ => panic!("sequence yielded unexpected error {}", err),
+        }
     }
 
-    #[test]
-    fn sequence_test_and_set_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key = BytesMut::from(&b"key"[..]);
-                let val = BytesMut::from(&b"val"[..]);
-                master
-                    .sequence(vec![Action::Assert{key: key.clone(), value: None},
-                                   Action::Set{key: key.clone(), value: val.clone()}])
-                    .await
-                    .expect("'sequence' failed");
-
-                let res = master
-                    .get(Consistency::Consistent, key)
-                    .await
-                    .expect("'get' failed");
-                assert_eq!(res, val);
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn sequence_assert_exists_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        master.set(key.clone(), val).await.expect("'set' failed");
+        master
+            .sequence(vec![Action::AssertExists{key}])
+            .await
+            .expect("Sequence[AssertExists] yielded error");
     }
 
-    #[test]
-    fn prefix_keys_failure() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key1 = BytesMut::from(&b"key1"[..]);
-                let val1 = BytesMut::from(&b"val1"[..]);
-                let key2 = BytesMut::from(&b"key2"[..]);
-                let val2 = BytesMut::from(&b"val2"[..]);
-
-                master
-                    .sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                   Action::Set{key: key2.clone(), value: val2}])
-                    .await
-                    .expect("'sequence' failed");
-
-                let pfx = BytesMut::from(&b"no_such_prefix"[..]);
-                let res = master
-                    .prefix_keys(Consistency::Consistent, pfx.clone(), 0)
-                    .await
-                    .expect("'prefix_keys(0)' failed");
-                assert_eq!(0, res.len());
-                
-                let res = master
-                    .prefix_keys(Consistency::Consistent, pfx, 10)
-                    .await
-                    .expect("'prefix_keys(10)' failed");
-                assert_eq!(0, res.len());
-            };
-
-            Box::pin(fut)
-        })
+    #[tokio::test]
+    async fn sequence_test_and_set_failure() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        let res = master
+            .sequence(vec![Action::Assert{key: key.clone(), value: Some(val.clone())},
+                           Action::Set{key, value: val}])
+            .await;
+        assert_eq!(true, res.is_err());
+        let err = res.err().unwrap();
+        match err {
+            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
+                                                        code),
+            _ => panic!("sequence yielded unexpected error {}", err),
+        }
     }
 
-    #[test]
-    fn prefix_keys_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key1 = BytesMut::from(&b"key1"[..]);
-                let val1 = BytesMut::from(&b"val1"[..]);
-                let key2 = BytesMut::from(&b"key2"[..]);
-                let val2 = BytesMut::from(&b"val2"[..]);
+    #[tokio::test]
+    async fn sequence_test_and_set_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key = BytesMut::from(&b"key"[..]);
+        let val = BytesMut::from(&b"val"[..]);
+        master
+            .sequence(vec![Action::Assert{key: key.clone(), value: None},
+                           Action::Set{key: key.clone(), value: val.clone()}])
+            .await
+            .expect("'sequence' failed");
 
-                master
-                    .sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                   Action::Set{key: key2.clone(), value: val2}])
-                    .await
-                    .expect("'sequence' failed");
-                
-                let pfx = BytesMut::from(&b"key"[..]);
-                let vec = master
-                    .prefix_keys(Consistency::Consistent, pfx.clone(), 0)
-                    .await
-                    .expect("'prefix_keys(0)' failed");
-                assert_eq!(0, vec.len());
-
-                let vec = master
-                    .prefix_keys(Consistency::Consistent, pfx.clone(), 1)
-                    .await
-                    .expect("'prefix_keys(1)' failed");
-                assert_eq!(1, vec.len());
-                assert_eq!(key1, vec[0]);
-
-                let vec = master
-                    .prefix_keys(Consistency::Consistent, pfx.clone(), 10)
-                    .await
-                    .expect("'prefix_keys(10)' failed");
-                assert_eq!(2, vec.len());
-                assert_eq!(key1, vec[0]);
-                assert_eq!(key2, vec[1]);
-            };
-
-            Box::pin(fut)
-        })
+        let res = master
+            .get(Consistency::Consistent, key)
+            .await
+            .expect("'get' failed");
+        assert_eq!(res, val);
     }
 
-    #[test]
-    fn range_success() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key1 = BytesMut::from(&b"key1"[..]);
-                let val1 = BytesMut::from(&b"val1"[..]);
-                let key2 = BytesMut::from(&b"key2"[..]);
-                let val2 = BytesMut::from(&b"val2"[..]);
+    #[tokio::test]
+    async fn prefix_keys_failure() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key1 = BytesMut::from(&b"key1"[..]);
+        let val1 = BytesMut::from(&b"val1"[..]);
+        let key2 = BytesMut::from(&b"key2"[..]);
+        let val2 = BytesMut::from(&b"val2"[..]);
 
-                master
-                    .sequence(vec![Action::Set{key: key1.clone(), value: val1},
-                                   Action::Set{key: key2.clone(), value: val2}])
-                    .await
-                    .expect("'sequence' failed");
+        master
+            .sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                           Action::Set{key: key2.clone(), value: val2}])
+            .await
+            .expect("'sequence' failed");
 
-                let vec = master
-                    .range(Consistency::Consistent,
-                           Some(key1.clone()),
-                           true,
+        let pfx = BytesMut::from(&b"no_such_prefix"[..]);
+        let res = master
+            .prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+            .await
+            .expect("'prefix_keys(0)' failed");
+        assert_eq!(0, res.len());
+
+        let res = master
+            .prefix_keys(Consistency::Consistent, pfx, 10)
+            .await
+            .expect("'prefix_keys(10)' failed");
+        assert_eq!(0, res.len());
+    }
+
+    #[tokio::test]
+    async fn prefix_keys_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key1 = BytesMut::from(&b"key1"[..]);
+        let val1 = BytesMut::from(&b"val1"[..]);
+        let key2 = BytesMut::from(&b"key2"[..]);
+        let val2 = BytesMut::from(&b"val2"[..]);
+
+        master
+            .sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                           Action::Set{key: key2.clone(), value: val2}])
+            .await
+            .expect("'sequence' failed");
+
+        let pfx = BytesMut::from(&b"key"[..]);
+        let vec = master
+            .prefix_keys(Consistency::Consistent, pfx.clone(), 0)
+            .await
+            .expect("'prefix_keys(0)' failed");
+        assert_eq!(0, vec.len());
+
+        let vec = master
+            .prefix_keys(Consistency::Consistent, pfx.clone(), 1)
+            .await
+            .expect("'prefix_keys(1)' failed");
+        assert_eq!(1, vec.len());
+        assert_eq!(key1, vec[0]);
+
+        let vec = master
+            .prefix_keys(Consistency::Consistent, pfx.clone(), 10)
+            .await
+            .expect("'prefix_keys(10)' failed");
+        assert_eq!(2, vec.len());
+        assert_eq!(key1, vec[0]);
+        assert_eq!(key2, vec[1]);
+    }
+
+    #[tokio::test]
+    async fn range_success() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key1 = BytesMut::from(&b"key1"[..]);
+        let val1 = BytesMut::from(&b"val1"[..]);
+        let key2 = BytesMut::from(&b"key2"[..]);
+        let val2 = BytesMut::from(&b"val2"[..]);
+
+        master
+            .sequence(vec![Action::Set{key: key1.clone(), value: val1},
+                           Action::Set{key: key2.clone(), value: val2}])
+            .await
+            .expect("'sequence' failed");
+
+        let vec = master
+            .range(Consistency::Consistent,
+                   Some(key1.clone()),
+                   true,
+                   None,
+                   true,
+                   100)
+            .await
+            .expect("'range' failed");
+
+        assert_eq!(2, vec.len());
+        assert_eq!(key1, vec[0]);
+        assert_eq!(key2, vec[1]);
+    }
+
+    #[tokio::test]
+    async fn range_entries() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key1 = BytesMut::from(&b"key1"[..]);
+        let val1 = BytesMut::from(&b"val1"[..]);
+        let key2 = BytesMut::from(&b"key2"[..]);
+        let val2 = BytesMut::from(&b"val2"[..]);
+
+        master
+            .sequence(vec![Action::Set{key: key1.clone(), value: val1.clone()},
+                           Action::Set{key: key2.clone(), value: val2.clone()}])
+            .await
+            .expect("'sequence' failed");
+
+        let vec = master
+            .range_entries(Consistency::Consistent,
                            None,
                            true,
+                           Some(key2.clone()),
+                           true,
                            100)
-                    .await
-                    .expect("'range' failed");
+            .await
+            .expect("'range_entries' failed");
 
-                assert_eq!(2, vec.len());
-                assert_eq!(key1, vec[0]);
-                assert_eq!(key2, vec[1]);
-            };
-
-            Box::pin(fut)
-        })
+        assert_eq!(2, vec.len());
+        assert_eq!((key1, val1), vec[0]);
+        assert_eq!((key2, val2), vec[1]);
     }
 
-    #[test]
-    fn range_entries() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key1 = BytesMut::from(&b"key1"[..]);
-                let val1 = BytesMut::from(&b"val1"[..]);
-                let key2 = BytesMut::from(&b"key2"[..]);
-                let val2 = BytesMut::from(&b"val2"[..]);
+    #[tokio::test]
+    async fn delete_prefix() {
+        let fixture = Fixture::new(3);
+        let mut master = fixture.connect_to_master().await;
+        let key1 = BytesMut::from(&b"key1"[..]);
+        let val1 = BytesMut::from(&b"val1"[..]);
+        let key2 = BytesMut::from(&b"key2"[..]);
+        let val2 = BytesMut::from(&b"val2"[..]);
 
-                master
-                    .sequence(vec![Action::Set{key: key1.clone(), value: val1.clone()},
-                                   Action::Set{key: key2.clone(), value: val2.clone()}])
-                    .await
-                    .expect("'sequence' failed");
-                
-                let vec = master
-                    .range_entries(Consistency::Consistent,
-                                   None,
-                                   true,
-                                   Some(key2.clone()),
-                                   true,
-                                   100)
-                    .await
-                    .expect("'range_entries' failed");
+        master
+            .sequence(vec![Action::Set{key: key1, value: val1},
+                           Action::Set{key: key2, value: val2}])
+            .await
+            .expect("'sequence' failed");
 
-                assert_eq!(2, vec.len());
-                assert_eq!((key1, val1), vec[0]);
-                assert_eq!((key2, val2), vec[1]);
-            };
+        let pfx = BytesMut::from(&b"key"[..]);
+        let count = master
+            .delete_prefix(pfx.clone())
+            .await
+            .expect("'delete_prefix' failed");
 
-            Box::pin(fut)
-        })
-    }
+        assert_eq!(2, count);
 
-    #[test]
-    fn delete_prefix() {
-        test_with_master(move |mut master| {
-            let fut = async move {
-                let key1 = BytesMut::from(&b"key1"[..]);
-                let val1 = BytesMut::from(&b"val1"[..]);
-                let key2 = BytesMut::from(&b"key2"[..]);
-                let val2 = BytesMut::from(&b"val2"[..]);
+        let vec = master
+            .prefix_keys(Consistency::Consistent, pfx, 100)
+            .await
+            .expect("'prefix_keys' failed");
 
-                master
-                    .sequence(vec![Action::Set{key: key1, value: val1},
-                                   Action::Set{key: key2, value: val2}])
-                    .await
-                    .expect("'sequence' failed");
-
-                let pfx = BytesMut::from(&b"key"[..]);
-                let count = master
-                    .delete_prefix(pfx.clone())
-                    .await
-                    .expect("'delete_prefix' failed");
-
-                assert_eq!(2, count);
-
-                let vec = master
-                    .prefix_keys(Consistency::Consistent, pfx, 100)
-                    .await
-                    .expect("'prefix_keys' failed");
-
-                assert_eq!(true, vec.is_empty());
-            };
-
-            Box::pin(fut)
-        })
+        assert_eq!(true, vec.is_empty());
     }
 }

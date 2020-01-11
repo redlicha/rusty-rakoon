@@ -22,7 +22,3 @@ tower-service = "0.3"
 uuid = { version = "0.6", features = ["v4"] }
 env_logger = "*"
 rand = "0.3"
-tokio-current-thread = "^0.1"
-tokio-executor = "^0.1"
-tokio-reactor = "^0.1"
-tokio-timer = "^0.2"

@@ -16,7 +16,6 @@
 mod test {
     use bytes::BytesMut;
     use env_logger;
-    use libc;
     use rand::{
         thread_rng,
         distributions::{
@@ -30,10 +29,6 @@ mod test {
         collections::{
             BTreeMap,
             HashSet
-        },
-        ffi::{
-            CStr,
-            CString,
         },
         fmt::{
             Display,
@@ -65,23 +60,9 @@ mod test {
 
     use uuid;
 
-    fn getenv(name : &str) -> Option<String> {
-        unsafe {
-            if let Ok(c) = CString::new(name) {
-                let cstr = libc::getenv(c.as_ptr());
-                if !cstr.is_null() {
-                    if let Ok(s) = CStr::from_ptr(cstr).to_str() {
-                        return Some(s.to_owned())
-                    }
-                }
-            }
-            None
-        }
-    }
-
     fn get_env_or_default<T: str::FromStr + Clone>(name : &str, default : &T) -> T {
-        if let Some(s) = getenv(name) {
-            if let Ok(v) = s.parse::<T>() {
+        if let Some(s) = std::env::var_os(name) {
+            if let Ok(v) = s.to_str().unwrap().parse::<T>() {
                 return v
             }
         }
@@ -89,8 +70,8 @@ mod test {
         default.clone()
     }
 
-    fn hostname() -> String {
-        "127.0.0.1".to_owned()
+    fn hostname() ->&'static str {
+        "127.0.0.1"
     }
 
     struct PortAllocatorImpl {
@@ -220,7 +201,7 @@ mod test {
         }
 
         fn address(&self) -> String {
-            hostname() + &":".to_owned() + &self.client_port.to_string()
+            hostname().to_owned() + &":".to_owned() + &self.client_port.to_string()
         }
 
         fn config(&self) -> NodeConfig {

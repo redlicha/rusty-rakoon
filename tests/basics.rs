@@ -10,6 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[macro_use] extern crate lazy_static;
 #[macro_use] extern crate log;
 
 #[cfg(test)]
@@ -51,7 +52,6 @@ mod test {
         sync::{
             Arc,
             Mutex,
-            Once,
         },
         time::{
             Duration,
@@ -74,15 +74,15 @@ mod test {
         "127.0.0.1"
     }
 
-    struct PortAllocatorImpl {
+    struct PortAllocator {
         next_port: u16,
         cache: HashSet<u16>,
     }
 
-    impl PortAllocatorImpl {
+    impl PortAllocator {
         fn new(port_base: u16) -> Self {
-            PortAllocatorImpl{next_port: port_base,
-                              cache: HashSet::<u16>::new()}
+            PortAllocator{next_port: port_base,
+                          cache: HashSet::<u16>::new()}
         }
 
         fn get(&mut self) -> u16 {
@@ -102,49 +102,12 @@ mod test {
         }
     }
 
-    // Singleton as tests can run in parallel.
-    // Cribbed from http://stackoverflow.com/questions/27791532/how-do-i-create-a-global-mutable-singleton
-    #[derive(Clone)]
-    struct PortAllocator(Arc<Mutex<PortAllocatorImpl>>);
-
-    impl PortAllocator {
-        fn new(port_base: u16) -> Self {
-            PortAllocator(Arc::new(Mutex::new(PortAllocatorImpl::new(port_base))))
-        }
-
-        fn get(&mut self) -> u16 {
-            self.0.lock().unwrap().get()
-        }
-
-        fn put(&mut self, port: u16) {
-            self.0.lock().unwrap().put(port)
-        }
-    }
-
-    fn port_allocator() -> PortAllocator {
-        static mut SINGLETON : *const PortAllocator = 0 as *const PortAllocator;
-        static ONCE : Once = Once::new();
-
-        unsafe {
-            ONCE.call_once(|| {
-                let port_base = get_env_or_default("ARAKOON_PORT_BASE",
-                                                   &17_000);
-                SINGLETON = std::mem::transmute(Box::new(PortAllocator::new(port_base)));
-
-                // free heap memory at exit
-                // This doesn't exist in stable rust yet, so we will just leak it!
-                // rt::at_exit(|| {
-                //     let singleton: Box<PortAllocator> = std::mem::transmute(SINGLETON);
-                //     drop(singleton);
-
-                //     // Set it to null again. I hope only one thread can call `at_exit`!
-                //     SINGLETON = 0 as *const _;
-                // });
-            });
-
-            // give out a copy of the data that is safe to use concurrently.
-            (*SINGLETON).clone()
-        }
+    lazy_static! {
+        static ref PORT_ALLOCATOR: Arc<Mutex<PortAllocator>> = {
+            let port_base = get_env_or_default("ARAKOON_PORT_BASE",
+                                               &17_000);
+            Arc::new(Mutex::new(PortAllocator::new(port_base)))
+        };
     }
 
     #[derive(Eq, Hash, PartialEq)]
@@ -152,13 +115,13 @@ mod test {
 
     impl Port {
         fn new() -> Port {
-            Port(port_allocator().get())
+            Port(PORT_ALLOCATOR.clone().lock().unwrap().get())
         }
     }
 
     impl Drop for Port {
         fn drop(&mut self) {
-            port_allocator().put(self.0)
+            PORT_ALLOCATOR.clone().lock().unwrap().put(self.0)
         }
     }
 

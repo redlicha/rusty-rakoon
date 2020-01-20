@@ -19,6 +19,7 @@ tokio-util = { version = "0.2", features = ["codec"] }
 tower-service = "0.3"
 
 [dev-dependencies]
-uuid = { version = "0.6", features = ["v4"] }
 env_logger = "*"
+lazy_static = "*"
+uuid = { version = "0.6", features = ["v4"] }
 rand = "0.3"

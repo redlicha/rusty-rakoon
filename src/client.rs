@@ -32,7 +32,6 @@ use futures_util::{
 };
 
 use std::{
-    error,
     fmt::{
         Display,
     },
@@ -72,15 +71,6 @@ impl Display for Error {
         match *self {
             Error::ErrorResponse(ref code, ref msg) => write!(f, "Arakoon error response {:?} : {}", code, msg),
             Error::IoError(ref err) => write!(f, "I/O error: {}", err),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::ErrorResponse(_, _) => "Arakoon error response",
-            Error::IoError(ref err) => err.description(),
         }
     }
 }

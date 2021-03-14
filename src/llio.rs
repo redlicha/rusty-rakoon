@@ -254,7 +254,7 @@ impl Encoder for BoolEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, req: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
-        I8Encoder.encode({ if req { 0x1i8 } else { 0x0i8 }}, buf)
+        I8Encoder.encode( if req { 0x1i8 } else { 0x0i8 }, buf)
     }
 }
 

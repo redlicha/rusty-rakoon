@@ -31,14 +31,13 @@ impl ActionEncoder {
     }
 }
 
-impl Encoder for ActionEncoder {
-    type Item = Action;
+impl Encoder<Action> for ActionEncoder {
     type Error = std::io::Error;
 
-    fn encode(&mut self, action: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, action: Action, buf: &mut BytesMut) -> std::io::Result<()> {
         let mut i32_encoder = I32Encoder::new();
         let mut data_encoder = DataEncoder::new();
-        let mut opt_encoder = OptionEncoder::<DataEncoder>::new(DataEncoder::new());
+        let mut opt_encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
         match action {
             Action::Set{key, value} => {
                 i32_encoder.encode(0x1, buf)?;
@@ -146,7 +145,7 @@ fn write_range_op(opcode: Opcode,
                   buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(opcode, buf)?;
     write_consistency(consistency, buf)?;
-    let mut opt_encoder = OptionEncoder::<DataEncoder>::new(DataEncoder::new());
+    let mut opt_encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
     opt_encoder.encode(first_key, buf)?;
     let mut bool_encoder = BoolEncoder::new();
     bool_encoder.encode(include_first, buf)?;
@@ -173,7 +172,7 @@ fn write_test_and_set(key: BytesMut,
                       buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::TestAndSet, buf)?;
     DataEncoder::new().encode(key, buf)?;
-    let mut encoder = OptionEncoder::<DataEncoder>::new(DataEncoder::new());
+    let mut encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
     encoder.encode(old, buf)?;
     encoder.encode(new, buf)?;
     Ok(Codec::RecvStatus(Opcode::TestAndSet))
@@ -187,7 +186,7 @@ fn write_sequence_op(opcode: Opcode,
     let mut tmp = BytesMut::new();
     // magic value alert
     I32Encoder::new().encode(0x5, &mut tmp)?;
-    VectorEncoder::<ActionEncoder>::new(ActionEncoder::new()).encode(actions, &mut tmp)?;
+    VectorEncoder::<Action, ActionEncoder>::new(ActionEncoder::new()).encode(actions, &mut tmp)?;
     DataEncoder::new().encode(tmp, buf)?;
     Ok(Codec::RecvStatus(opcode))
 }
@@ -197,7 +196,7 @@ fn write_user_function(fun: String,
                        buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::UserFunction, buf)?;
     DataEncoder::new().encode(BytesMut::from(fun.as_str()), buf)?;
-    OptionEncoder::<DataEncoder>::new(DataEncoder::new()).encode(arg, buf)?;
+    OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new()).encode(arg, buf)?;
     Ok(Codec::RecvStatus(Opcode::UserFunction))
 }
 
@@ -214,11 +213,10 @@ impl Default for Codec {
     }
 }
 
-impl Encoder for Codec {
-    type Item = Request;
+impl Encoder<Request> for Codec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, req: Self::Item, buf: &mut BytesMut) ->
+    fn encode(&mut self, req: Request, buf: &mut BytesMut) ->
         std::io::Result<()> {
             trace!("req: {:?}", req);
             match *self {

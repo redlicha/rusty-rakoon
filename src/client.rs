@@ -45,14 +45,13 @@ use tokio::{
     net::{
         TcpStream,
     },
-    stream::{
-        StreamExt,
-    },
     sync::{
         mpsc,
         oneshot
     },
 };
+
+use tokio_stream::StreamExt;
 
 use tokio_util::codec::{
     Decoder,
@@ -120,7 +119,7 @@ async fn dispatch(cluster_id: ClusterId, tcp_stream: TcpStream, mut rx: mpsc::Re
     let mut framed = Codec::new().framed(tcp_stream);
     framed.send(Request::Prologue{cluster_id}).await?;
 
-    while let Some((req, tx)) = rx.next().await {
+    while let Some((req, tx)) = rx.recv().await {
         trace!("sending request {:?}", req);
         let res = framed.send(req).await;
         if res.is_err() {
@@ -319,7 +318,7 @@ impl Service<Request> for Node {
 
     fn call(&mut self, req: Request) -> Self::Future {
         let (tx, rx) = oneshot::channel();
-        let mut sender = self.tx.clone();
+        let sender = self.tx.clone();
 
         let fut = async move {
             match sender.send((req, tx)).await {

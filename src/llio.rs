@@ -31,6 +31,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use std;
+use std::marker::PhantomData;
 use std::io::Cursor;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,12 +44,11 @@ impl I8Encoder {
     }
 }
 
-impl Encoder for I8Encoder {
-    type Item = i8;
+impl Encoder<i8> for I8Encoder {
     type Error = std::io::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
-        let s = std::mem::size_of::<Self::Item>();
+    fn encode(&mut self, val: i8, buf: &mut BytesMut) -> std::io::Result<()> {
+        let s = std::mem::size_of::<i8>();
         if buf.remaining_mut() < s {
             buf.reserve(s)
         }
@@ -95,12 +95,11 @@ impl I32Encoder {
     }
 }
 
-impl Encoder for I32Encoder {
-    type Item = i32;
+impl Encoder<i32> for I32Encoder {
     type Error = std::io::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
-        let s = std::mem::size_of::<Self::Item>();
+    fn encode(&mut self, val: i32, buf: &mut BytesMut) -> std::io::Result<()> {
+        let s = std::mem::size_of::<i32>();
         if buf.remaining_mut() < s {
             buf.reserve(s)
         }
@@ -147,12 +146,11 @@ impl I64Encoder {
     }
 }
 
-impl Encoder for I64Encoder {
-    type Item = i64;
+impl Encoder<i64> for I64Encoder {
     type Error = std::io::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
-        let s = std::mem::size_of::<Self::Item>();
+    fn encode(&mut self, val: i64, buf: &mut BytesMut) -> std::io::Result<()> {
+        let s = std::mem::size_of::<i64>();
         if buf.remaining_mut() < s {
             buf.reserve(s)
         }
@@ -249,11 +247,10 @@ impl BoolEncoder {
     }
 }
 
-impl Encoder for BoolEncoder {
-    type Item = bool;
+impl Encoder<bool> for BoolEncoder {
     type Error = std::io::Error;
 
-    fn encode(&mut self, req: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, req: bool, buf: &mut BytesMut) -> std::io::Result<()> {
         I8Encoder.encode( if req { 0x1i8 } else { 0x0i8 }, buf)
     }
 }
@@ -340,12 +337,11 @@ impl DataEncoder {
     }
 }
 
-impl Encoder for DataEncoder {
-    type Item = BytesMut;
+impl Encoder<BytesMut> for DataEncoder {
     type Error = std::io::Error;
 
     // TODO: Avoid extra copy due tp BytesMut::from() followed by buf.put()!?
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, val: BytesMut, buf: &mut BytesMut) -> std::io::Result<()> {
         let l = val.len();
         let s = l as i32;
         assert!(s >= 0);
@@ -427,24 +423,26 @@ impl Decoder for DataDecoder {
 
 /// Encoder combinator for option types.
 #[derive(Clone, Copy, Debug)]
-pub struct OptionEncoder<T>
-where T: Encoder {
-    encoder: T,
+pub struct OptionEncoder<T, E: Encoder<T>> {
+    encoder: E,
+    _marker: PhantomData<T>,
 }
 
-impl<T> OptionEncoder<T>
-where T: Encoder {
-    pub fn new(encoder: T) -> OptionEncoder<T> {
-        OptionEncoder{encoder}
+impl<T, E> OptionEncoder<T, E>
+where E: Encoder<T> {
+    pub fn new(encoder: E) -> OptionEncoder<T, E> {
+        OptionEncoder{
+            encoder,
+            _marker: PhantomData{}
+        }
     }
 }
 
-impl<T> Encoder for OptionEncoder<T>
-where T: Encoder<Error = std::io::Error> {
-    type Item = Option<T::Item>;
-    type Error = T::Error;
+impl<T, E> Encoder<std::option::Option<T>> for OptionEncoder<T, E>
+where E: Encoder<T, Error = std::io::Error> {
+    type Error = E::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, val: std::option::Option<T>, buf: &mut BytesMut) -> std::io::Result<()> {
         if let Some(v) = val {
             BoolEncoder.encode(true, buf)?;
             self.encoder.encode(v, buf)
@@ -504,24 +502,26 @@ where T: Decoder<Error = std::io::Error> {
 
 /// Encoder combinator for vector types.
 #[derive(Clone, Copy, Debug)]
-pub struct VectorEncoder<T>
-where T: Encoder {
-    encoder: T,
+pub struct VectorEncoder<T, E: Encoder<T>> {
+    encoder: E,
+    _marker: PhantomData<T>
 }
 
-impl<T> VectorEncoder<T>
-where T: Encoder {
-    pub fn new(encoder: T) -> VectorEncoder<T> {
-        VectorEncoder{encoder}
+impl<T, E> VectorEncoder<T, E>
+where E: Encoder<T> {
+    pub fn new(encoder: E) -> VectorEncoder<T, E> {
+        VectorEncoder{
+            encoder,
+            _marker: PhantomData{}
+        }
     }
 }
 
-impl<T> Encoder for VectorEncoder<T>
-where T: Encoder<Error = std::io::Error> {
-    type Item = Vec<T::Item>;
-    type Error = T::Error;
+impl<T, E> Encoder<std::vec::Vec<T>> for VectorEncoder<T, E>
+where E: Encoder<T, Error = std::io::Error> {
+    type Error = E::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, val: std::vec::Vec<T>, buf: &mut BytesMut) -> std::io::Result<()> {
         I32Encoder.encode(val.len() as i32, buf)?;
         for v in val {
             self.encoder.encode(v, buf)?;
@@ -599,26 +599,32 @@ where T: Decoder<Error = std::io::Error> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PairEncoder<F, S>
-where F: Encoder, S: Encoder {
-    first_encoder: F,
-    second_encoder: S,
+pub struct PairEncoder<F, S, EF, ES> {
+    first_encoder: EF,
+    second_encoder: ES,
+    _first_marker: PhantomData<F>,
+    _second_marker: PhantomData<S>,
 }
 
-impl<F, S> PairEncoder<F, S>
-where F: Encoder, S: Encoder {
-    pub fn new(first_encoder: F, second_encoder: S) -> PairEncoder<F, S> {
-        PairEncoder{first_encoder,
-                    second_encoder}
+impl<F, S, EF, ES> PairEncoder<F, S, EF, ES> {
+        pub fn new(first_encoder: EF, second_encoder: ES) -> PairEncoder<F, S, EF, ES> {
+            PairEncoder{
+                first_encoder,
+                second_encoder,
+                _first_marker: PhantomData{},
+                _second_marker: PhantomData{}
+            }
+        }
     }
-}
 
-impl<F, S> Encoder for PairEncoder<F, S>
-where F: Encoder<Error = std::io::Error>, S: Encoder<Error = std::io::Error> {
-    type Item = (F::Item, S::Item);
-    type Error = F::Error;
+impl<F, S, EF, ES> Encoder<(F, S)> for
+    PairEncoder<F, S, EF, ES>
+where
+    EF: Encoder<F, Error = std::io::Error>,
+    ES: Encoder<S, Error = std::io::Error> {
+        type Error = EF::Error;
 
-    fn encode(&mut self, val: Self::Item, buf: &mut BytesMut) -> std::io::Result<()> {
+        fn encode(&mut self, val: (F, S), buf: &mut BytesMut) -> std::io::Result<()> {
         let (fst, snd) = val;
         self.first_encoder.encode(fst, buf)?;
         self.second_encoder.encode(snd, buf)?;
@@ -691,7 +697,7 @@ mod test {
     use std::fmt::Debug;
 
     fn test_happy_path<E, D, V>(encoder: &mut E, decoder: &mut D, fst: V, snd: V)
-    where E: Encoder<Item=V, Error=std::io::Error>,
+    where E: Encoder<V, Error=std::io::Error>,
           D: Decoder<Item=V, Error=std::io::Error>,
           V: Clone + Debug + PartialEq {
         let mut buf = BytesMut::new();

@@ -77,6 +77,7 @@ pub enum Opcode {
     UserFunction = 0x15,
     SyncedSequence = 0x24,
     DeletePrefix = 0x27,
+    UserHook = 0x45,
 }
 
 /// Request sent to the server.
@@ -116,6 +117,8 @@ pub enum Request {
                    arg: Option<BytesMut> },
     SyncedSequence { actions: Vec<Action> },
     DeletePrefix { prefix: BytesMut },
+    UserHook { consistency: Consistency,
+               hook: String },
 }
 
 /// Response codes sent back from the server side in case of errors.

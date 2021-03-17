@@ -200,6 +200,13 @@ fn write_user_function(fun: String,
     Ok(Codec::RecvStatus(Opcode::UserFunction))
 }
 
+fn write_user_hook(consistency: Consistency, hook: String, buf: &mut BytesMut) -> std::io::Result<Codec> {
+    write_opcode(Opcode::UserHook, buf)?;
+    write_consistency(consistency, buf)?;
+    DataEncoder::new().encode(BytesMut::from(hook.as_str()), buf)?;
+    Ok(Codec::RecvStatus(Opcode::UserHook))
+}
+
 impl Codec {
     pub fn new() -> Codec {
         Codec::SendRequest
@@ -292,6 +299,7 @@ impl Encoder<Request> for Codec {
                 Request::DeletePrefix{prefix} => write_delete_op(Opcode::DeletePrefix,
                                                                  prefix,
                                                                  buf)?,
+                Request::UserHook{consistency, hook} => write_user_hook(consistency, hook, buf)?,
             };
 
             Ok(())
@@ -401,7 +409,8 @@ fn make_ok_status_decoder(opcode: Opcode) -> Box<dyn Decoder<Item=Response, Erro
         Opcode::WhoMaster => make_node_id_option_rsp_decoder(),
         Opcode::Exists => make_bool_rsp_decoder(),
         Opcode::Get => make_data_rsp_decoder(),
-        Opcode::Set | Opcode::Delete | Opcode::Sequence | Opcode::SyncedSequence  => make_ok_rsp_decoder(),
+        Opcode::Set | Opcode::Delete | Opcode::Sequence | Opcode::SyncedSequence | Opcode::UserHook =>
+            make_ok_rsp_decoder(),
         Opcode::Range | Opcode::PrefixKeys => make_data_vec_rsp_decoder(),
         Opcode::TestAndSet | Opcode::UserFunction => make_data_option_rsp_decoder(),
         Opcode::RangeEntries => make_data_pair_vec_rsp_decoder(),

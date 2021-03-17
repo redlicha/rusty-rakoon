@@ -304,6 +304,13 @@ impl Node {
               Request::UserFunction{function, arg},
               Ok(Response::DataOption(opt)) => Ok(opt))
     }
+
+    pub async fn user_hook(&mut self, consistency: Consistency, hook: String)
+                           -> std::result::Result<(), Error> {
+        call!(self,
+              Request::UserHook{consistency, hook},
+              Ok(Response::Ok) => Ok(()))
+    }
 }
 
 impl Service<Request> for Node {

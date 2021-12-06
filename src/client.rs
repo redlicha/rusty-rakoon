@@ -23,7 +23,10 @@ use crate::protocol::{
     Response,
 };
 
-use bytes::BytesMut;
+use bytes::{
+    Bytes,
+    BytesMut
+};
 
 use futures_util::{
     sink::{
@@ -208,74 +211,76 @@ impl Node {
               Ok(Response::String(s)) => Ok(s))
     }
 
-    pub async fn exists(&mut self, consistency: Consistency, key: BytesMut) -> std::result::Result<bool, Error> {
+    pub async fn exists(&mut self, consistency: Consistency, key: &'_ Bytes) -> std::result::Result<bool, Error> {
         call!(self,
-              Request::Exists{consistency, key},
+              Request::Exists{consistency, key: key.clone()},
               Ok(Response::Bool(b)) => Ok(b))
     }
 
-    pub async fn set(&mut self, key: BytesMut, value: BytesMut) -> std::result::Result<(), Error> {
+    pub async fn set(&mut self, key: &'_ Bytes, value: &'_ Bytes) -> std::result::Result<(), Error> {
         call!(self,
-              Request::Set{key, value},
+              Request::Set{key: key.clone(), value: value.clone()},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn get(&mut self, consistency: Consistency, key: BytesMut) -> std::result::Result<BytesMut, Error> {
+    pub async fn get(&mut self, consistency: Consistency, key: &'_ Bytes) -> std::result::Result<BytesMut, Error> {
         call!(self,
-              Request::Get{consistency, key},
+              Request::Get{consistency, key: key.clone()},
               Ok(Response::Data(val)) => Ok(val))
     }
 
-    pub async fn delete(&mut self, key: BytesMut) -> std::result::Result<(), Error> {
+    pub async fn delete(&mut self, key: &'_ Bytes) -> std::result::Result<(), Error> {
         call!(self,
-              Request::Delete{key},
+              Request::Delete{key: key.clone()},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn test_and_set(&mut self, key: BytesMut, old: Option<BytesMut>, new: Option<BytesMut>)
+    pub async fn test_and_set(&mut self, key: &'_ Bytes, old: Option<&'_ Bytes>, new: Option<&'_ Bytes>)
                               -> std::result::Result<Option<BytesMut>, Error> {
         call!(self,
-              Request::TestAndSet{key, old, new},
+              Request::TestAndSet{key: key.clone(),
+				  old: old.map(Bytes::clone),
+				  new: new.map(Bytes::clone)},
               Ok(Response::DataOption(maybe_buf)) => Ok(maybe_buf))
     }
 
-    pub async fn sequence(&mut self, actions: Vec<Action>) -> std::result::Result<(), Error> {
+    pub async fn sequence(&mut self, actions: &'_ [Action]) -> std::result::Result<(), Error> {
         call!(self,
-              Request::Sequence{actions},
+              Request::Sequence{actions: Vec::from(actions)},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn synced_sequence(&mut self, actions: Vec<Action>) -> std::result::Result<(), Error> {
+    pub async fn synced_sequence(&mut self, actions: &'_ [Action]) -> std::result::Result<(), Error> {
         call!(self,
-              Request::SyncedSequence{actions},
+              Request::SyncedSequence{actions: Vec::from(actions)},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn prefix_keys(&mut self, consistency: Consistency, prefix: BytesMut, max_entries: i32)
+    pub async fn prefix_keys(&mut self, consistency: Consistency, prefix: &'_ Bytes, max_entries: i32)
                              -> std::result::Result<Vec<BytesMut>, Error> {
         call!(self,
-              Request::PrefixKeys{consistency, prefix, max_entries},
+              Request::PrefixKeys{consistency, prefix: prefix.clone(), max_entries},
               Ok(Response::DataVec(vec)) => Ok(vec))
     }
 
-    pub async fn delete_prefix(&mut self, prefix: BytesMut) -> std::result::Result<u32, Error> {
+    pub async fn delete_prefix(&mut self, prefix: &'_ Bytes) -> std::result::Result<u32, Error> {
         call!(self,
-              Request::DeletePrefix{prefix},
+              Request::DeletePrefix{prefix: prefix.clone()},
               Ok(Response::Count(n)) => Ok(n))
     }
 
     pub async fn range(&mut self,
                        consistency: Consistency,
-                       first_key: Option<BytesMut>,
+                       first_key: Option<&'_ Bytes>,
                        include_first: bool,
-                       last_key: Option<BytesMut>,
+                       last_key: Option<&'_ Bytes>,
                        include_last: bool,
                        max_entries: i32) -> std::result::Result<Vec<BytesMut>, Error> {
         call!(self,
               Request::Range{consistency,
-                             first_key,
+                             first_key: first_key.map(Bytes::clone),
                              include_first,
-                             last_key,
+                             last_key: last_key.map(Bytes::clone),
                              include_last,
                              max_entries},
               Ok(Response::DataVec(vec)) => Ok(vec))
@@ -283,32 +288,32 @@ impl Node {
 
     pub async fn range_entries(&mut self,
                                consistency: Consistency,
-                               first_key: Option<BytesMut>,
+                               first_key: Option<&'_ Bytes>,
                                include_first: bool,
-                               last_key: Option<BytesMut>,
+                               last_key: Option<&'_ Bytes>,
                                include_last: bool,
                                max_entries: i32) -> std::result::Result<Vec<(BytesMut, BytesMut)>, Error> {
         call!(self,
               Request::RangeEntries{consistency,
-                                    first_key,
+                                    first_key: first_key.map(Bytes::clone),
                                     include_first,
-                                    last_key,
+                                    last_key: last_key.map(Bytes::clone),
                                     include_last,
                                     max_entries},
               Ok(Response::DataPairVec(vec)) => Ok(vec))
     }
 
-    pub async fn user_function(&mut self, function: String, arg: Option<BytesMut>)
+    pub async fn user_function(&mut self, function: &'_ str, arg: Option<&'_ Bytes>)
                                -> std::result::Result<Option<BytesMut>, Error> {
         call!(self,
-              Request::UserFunction{function, arg},
+              Request::UserFunction{function: String::from(function), arg: arg.map(Bytes::clone)},
               Ok(Response::DataOption(opt)) => Ok(opt))
     }
 
-    pub async fn user_hook(&mut self, consistency: Consistency, hook: String)
+    pub async fn user_hook(&mut self, consistency: Consistency, hook: &'_ str)
                            -> std::result::Result<(), Error> {
         call!(self,
-              Request::UserHook{consistency, hook},
+              Request::UserHook{consistency, hook: String::from(hook)},
               Ok(Response::Ok) => Ok(()))
     }
 }

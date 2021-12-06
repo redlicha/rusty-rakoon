@@ -27,7 +27,7 @@
 //! * move to a crate of its own?
 //! * use a distinct error type (that is convertible to `std::io::Error`)?
 //! * consider integrating this with `serde`?
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use std;
@@ -337,11 +337,11 @@ impl DataEncoder {
     }
 }
 
-impl Encoder<BytesMut> for DataEncoder {
+impl Encoder<Bytes> for DataEncoder {
     type Error = std::io::Error;
 
     // TODO: Avoid extra copy due tp BytesMut::from() followed by buf.put()!?
-    fn encode(&mut self, val: BytesMut, buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, val: Bytes, buf: &mut BytesMut) -> std::io::Result<()> {
         let l = val.len();
         let s = l as i32;
         assert!(s >= 0);
@@ -694,25 +694,37 @@ where F: Decoder<Error = std::io::Error>, F::Item: PartialEq, S: Decoder<Error =
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::convert::identity;
     use std::fmt::Debug;
 
-    fn test_happy_path<E, D, V>(encoder: &mut E, decoder: &mut D, fst: V, snd: V)
-    where E: Encoder<V, Error=std::io::Error>,
-          D: Decoder<Item=V, Error=std::io::Error>,
-          V: Clone + Debug + PartialEq {
+    fn test_happy_path<E, D, F, I, O>(encoder: &mut E,
+				   decoder: &mut D,
+				   fst: I,
+				   snd: I,
+				   conv: F)
+    where E: Encoder<I, Error=std::io::Error>,
+          D: Decoder<Item=O, Error=std::io::Error>,
+          I: Clone + Debug + PartialEq,
+	  O: Debug,
+	  F: Fn (O) -> I, {
         let mut buf = BytesMut::new();
         assert!(buf.is_empty());
         assert!(encoder.encode(fst.clone(), &mut buf).is_ok());
-        assert_eq!(fst, decoder.decode(&mut buf).unwrap().unwrap());
+        assert_eq!(fst, conv(decoder.decode(&mut buf).unwrap().unwrap()));
         assert!(buf.is_empty());
         assert!(encoder.encode(snd.clone(), &mut buf).is_ok());
-        assert_eq!(snd, decoder.decode(&mut buf).unwrap().unwrap());
+        assert_eq!(snd, conv(decoder.decode(&mut buf).unwrap().unwrap()));
         assert!(buf.is_empty());
     }
 
+
     #[test]
     fn test_i8_happy_path() {
-        test_happy_path(&mut I8Encoder::new(), &mut I8Decoder::new(), 1, 2);
+        test_happy_path(&mut I8Encoder::new(),
+			&mut I8Decoder::new(),
+			1,
+			2,
+			identity);
     }
 
     #[test]
@@ -720,7 +732,8 @@ mod test {
         test_happy_path(&mut I32Encoder::new(),
                         &mut I32Decoder::new(),
                         (1i32 << 31) + 2,
-                        (2i32 << 31) + 3);
+                        (2i32 << 31) + 3,
+			identity);
     }
 
     #[test]
@@ -728,12 +741,17 @@ mod test {
         test_happy_path(&mut I64Encoder::new(),
                         &mut I64Decoder::new(),
                         (1i64 << 63) + 2,
-                        (2i64 << 63) + 3);
+                        (2i64 << 63) + 3,
+			identity);
     }
 
     #[test]
     fn test_bool_happy_path() {
-        test_happy_path(&mut BoolEncoder::new(), &mut BoolDecoder::new(), true, false);
+        test_happy_path(&mut BoolEncoder::new(),
+			&mut BoolDecoder::new(),
+			true,
+			false,
+			identity);
     }
 
     #[test]
@@ -750,7 +768,8 @@ mod test {
         test_happy_path(&mut OptionEncoder::new(I32Encoder::new()),
                         &mut OptionDecoder::new(I32Decoder::new()),
                         None,
-                        Some(1i32));
+                        Some(1i32),
+			identity);
     }
 
     #[test]
@@ -758,7 +777,8 @@ mod test {
         test_happy_path(&mut PairEncoder::new(I8Encoder::new(), BoolEncoder::new()),
                         &mut PairDecoder::new(I8Decoder::new(), BoolDecoder::new()),
                         (23i8, false),
-                        (42i8, true));
+                        (42i8, true),
+			identity);
     }
 
     #[test]
@@ -766,7 +786,8 @@ mod test {
         test_happy_path(&mut VectorEncoder::new(I32Encoder::new()),
                         &mut VectorDecoder::new(I32Decoder::new(), false),
                         vec![1i32, 2i32, 3i32],
-                        vec![4i32, 5i32, 6i32]);
+                        vec![4i32, 5i32, 6i32],
+			identity);
     }
 
     #[test]
@@ -782,7 +803,8 @@ mod test {
         test_happy_path(&mut VectorEncoder::new(I32Encoder::new()),
                         &mut VectorDecoder::new(I32Decoder::new(), false),
                         vec![],
-                        vec![]);
+                        vec![],
+			identity);
     }
 
     #[test]
@@ -795,8 +817,9 @@ mod test {
 
         test_happy_path(&mut DataEncoder::new(),
                         &mut DataDecoder::new(),
-                        fst,
-                        snd);
+                        fst.freeze(),
+                        snd.freeze(),
+			BytesMut::freeze)
     }
 
     #[test]
@@ -814,8 +837,11 @@ mod test {
 
         test_happy_path(&mut OptionEncoder::new(DataEncoder::new()),
                         &mut OptionDecoder::new(DataDecoder::new()),
-                        Some(fst),
-                        None);
+                        Some(fst.freeze()),
+                        None,
+			|o: std::option::Option<BytesMut>| -> std::option::Option<Bytes> {
+			    o.map(BytesMut::freeze)
+			});
     }
 
     #[test]

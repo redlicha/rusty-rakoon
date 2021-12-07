@@ -11,7 +11,7 @@
 // limitations under the License.
 
 //! Types used for the Arakoon RPC protocol.
-use bytes::BytesMut;
+use bytes::{Bytes,BytesMut};
 use num;
 use std;
 use std::fmt::Display;
@@ -51,14 +51,14 @@ pub enum Consistency {
 /// The building blocks of sequences.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    Set { key: BytesMut,
-          value: BytesMut },
-    Delete { key: BytesMut },
-    Assert { key: BytesMut,
-             value: Option<BytesMut> },
-    AssertExists { key: BytesMut },
+    Set { key: Bytes,
+          value: Bytes },
+    Delete { key: Bytes },
+    Assert { key: Bytes,
+             value: Option<Bytes> },
+    AssertExists { key: Bytes },
     UserFunction { function: String,
-                   arg: Option<BytesMut> },
+                   arg: Option<Bytes> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -77,6 +77,7 @@ pub enum Opcode {
     UserFunction = 0x15,
     SyncedSequence = 0x24,
     DeletePrefix = 0x27,
+    UserHook = 0x45,
 }
 
 /// Request sent to the server.
@@ -87,35 +88,37 @@ pub enum Request {
             node_id: NodeId },
     WhoMaster,
     Exists { consistency: Consistency,
-             key: BytesMut },
+             key: Bytes },
     Get { consistency: Consistency,
-          key: BytesMut },
-    Set { key: BytesMut,
-          value: BytesMut },
-    Delete { key: BytesMut },
+          key: Bytes },
+    Set { key: Bytes,
+          value: Bytes },
+    Delete { key: Bytes },
     Range { consistency: Consistency,
-            first_key: Option<BytesMut>,
+            first_key: Option<Bytes>,
             include_first: bool,
-            last_key: Option<BytesMut>,
+            last_key: Option<Bytes>,
             include_last: bool,
             max_entries: i32 },
     PrefixKeys { consistency: Consistency,
-                 prefix: BytesMut,
+                 prefix: Bytes,
                  max_entries: i32 },
-    TestAndSet { key: BytesMut,
-                 old: Option<BytesMut>,
-                 new: Option<BytesMut> },
+    TestAndSet { key: Bytes,
+                 old: Option<Bytes>,
+                 new: Option<Bytes> },
     RangeEntries { consistency: Consistency,
-                   first_key: Option<BytesMut>,
+                   first_key: Option<Bytes>,
                    include_first: bool,
-                   last_key: Option<BytesMut>,
+                   last_key: Option<Bytes>,
                    include_last: bool,
                    max_entries: i32 },
     Sequence { actions: Vec<Action> },
     UserFunction { function: String,
-                   arg: Option<BytesMut> },
+                   arg: Option<Bytes> },
     SyncedSequence { actions: Vec<Action> },
-    DeletePrefix { prefix: BytesMut },
+    DeletePrefix { prefix: Bytes },
+    UserHook { consistency: Consistency,
+               hook: String },
 }
 
 /// Response codes sent back from the server side in case of errors.

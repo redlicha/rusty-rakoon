@@ -13,7 +13,7 @@
 use crate::llio::*;
 use crate::protocol::*;
 
-use bytes::BytesMut;
+use bytes::{Bytes,BytesMut};
 use std;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -37,7 +37,7 @@ impl Encoder<Action> for ActionEncoder {
     fn encode(&mut self, action: Action, buf: &mut BytesMut) -> std::io::Result<()> {
         let mut i32_encoder = I32Encoder::new();
         let mut data_encoder = DataEncoder::new();
-        let mut opt_encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
+        let mut opt_encoder = OptionEncoder::<Bytes, DataEncoder>::new(DataEncoder::new());
         match action {
             Action::Set{key, value} => {
                 i32_encoder.encode(0x1, buf)?;
@@ -50,7 +50,7 @@ impl Encoder<Action> for ActionEncoder {
             }
             Action::UserFunction{function, arg} => {
                 i32_encoder.encode(0x7, buf)?;
-                data_encoder.encode(BytesMut::from(function.as_str()), buf)?;
+                data_encoder.encode(Bytes::from(function), buf)?;
                 opt_encoder.encode(arg, buf)
             }
             Action::Assert{key, value} => {
@@ -93,16 +93,17 @@ fn write_prologue(cluster_id: ClusterId, buf: &mut BytesMut) -> std::io::Result<
     let mut i32_encoder = I32Encoder::new();
     i32_encoder.encode(MAGIC, buf)?;
     i32_encoder.encode(Opcode::Ping as i32, buf)?;
-    DataEncoder::new().encode(BytesMut::from(cluster_id.0.as_str()), buf)?;
+    DataEncoder::new().encode(Bytes::from(cluster_id.0), buf)?;
     // no response expected
     Ok(Codec::SendRequest)
 }
 
-fn write_hello(cluster_id: &ClusterId, node_id: &NodeId, buf: &mut BytesMut) -> std::io::Result<Codec> {
+fn write_hello(cluster_id: ClusterId, node_id: NodeId, buf: &mut BytesMut)
+	       -> std::io::Result<Codec> {
     write_opcode(Opcode::Ping, buf)?;
     let mut encoder = DataEncoder::new();
-    encoder.encode(BytesMut::from(node_id.0.as_str()), buf)?;
-    encoder.encode(BytesMut::from(cluster_id.0.as_str()), buf)?;
+    encoder.encode(Bytes::from(node_id.0), buf)?;
+    encoder.encode(Bytes::from(cluster_id.0), buf)?;
     Ok(Codec::RecvStatus(Opcode::Ping))
 }
 
@@ -113,7 +114,7 @@ fn write_who_master(buf: &mut BytesMut) -> std::io::Result<Codec> {
 
 fn write_get_op(opcode: Opcode,
                 consistency: Consistency,
-                key: BytesMut,
+                key: Bytes,
                 buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(opcode, buf)?;
     write_consistency(consistency, buf)?;
@@ -121,7 +122,7 @@ fn write_get_op(opcode: Opcode,
     Ok(Codec::RecvStatus(opcode))
 }
 
-fn write_set(key: BytesMut, val: BytesMut, buf: &mut BytesMut) -> std::io::Result<Codec> {
+fn write_set(key: Bytes, val: Bytes, buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::Set, buf)?;
     let mut encoder = DataEncoder::new();
     encoder.encode(key, buf)?;
@@ -129,7 +130,7 @@ fn write_set(key: BytesMut, val: BytesMut, buf: &mut BytesMut) -> std::io::Resul
     Ok(Codec::RecvStatus(Opcode::Set))
 }
 
-fn write_delete_op(opcode: Opcode, key: BytesMut, buf: &mut BytesMut) -> std::io::Result<Codec> {
+fn write_delete_op(opcode: Opcode, key: Bytes, buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(opcode, buf)?;
     DataEncoder::new().encode(key, buf)?;
     Ok(Codec::RecvStatus(opcode))
@@ -137,15 +138,15 @@ fn write_delete_op(opcode: Opcode, key: BytesMut, buf: &mut BytesMut) -> std::io
 
 fn write_range_op(opcode: Opcode,
                   consistency: Consistency,
-                  first_key: Option<BytesMut>,
+                  first_key: Option<Bytes>,
                   include_first: bool,
-                  last_key: Option<BytesMut>,
+                  last_key: Option<Bytes>,
                   include_last: bool,
                   max_entries: i32,
                   buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(opcode, buf)?;
     write_consistency(consistency, buf)?;
-    let mut opt_encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
+    let mut opt_encoder = OptionEncoder::<Bytes, DataEncoder>::new(DataEncoder::new());
     opt_encoder.encode(first_key, buf)?;
     let mut bool_encoder = BoolEncoder::new();
     bool_encoder.encode(include_first, buf)?;
@@ -156,7 +157,7 @@ fn write_range_op(opcode: Opcode,
 }
 
 fn write_prefix_keys(consistency: Consistency,
-                     prefix: BytesMut,
+                     prefix: Bytes,
                      max_entries: i32,
                      buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::PrefixKeys, buf)?;
@@ -166,13 +167,13 @@ fn write_prefix_keys(consistency: Consistency,
     Ok(Codec::RecvStatus(Opcode::PrefixKeys))
 }
 
-fn write_test_and_set(key: BytesMut,
-                      old: Option<BytesMut>,
-                      new: Option<BytesMut>,
+fn write_test_and_set(key: Bytes,
+                      old: Option<Bytes>,
+                      new: Option<Bytes>,
                       buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::TestAndSet, buf)?;
     DataEncoder::new().encode(key, buf)?;
-    let mut encoder = OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new());
+    let mut encoder = OptionEncoder::<Bytes, DataEncoder>::new(DataEncoder::new());
     encoder.encode(old, buf)?;
     encoder.encode(new, buf)?;
     Ok(Codec::RecvStatus(Opcode::TestAndSet))
@@ -187,17 +188,24 @@ fn write_sequence_op(opcode: Opcode,
     // magic value alert
     I32Encoder::new().encode(0x5, &mut tmp)?;
     VectorEncoder::<Action, ActionEncoder>::new(ActionEncoder::new()).encode(actions, &mut tmp)?;
-    DataEncoder::new().encode(tmp, buf)?;
+    DataEncoder::new().encode(tmp.freeze(), buf)?;
     Ok(Codec::RecvStatus(opcode))
 }
 
 fn write_user_function(fun: String,
-                       arg: Option<BytesMut>,
+                       arg: Option<Bytes>,
                        buf: &mut BytesMut) -> std::io::Result<Codec> {
     write_opcode(Opcode::UserFunction, buf)?;
-    DataEncoder::new().encode(BytesMut::from(fun.as_str()), buf)?;
-    OptionEncoder::<BytesMut, DataEncoder>::new(DataEncoder::new()).encode(arg, buf)?;
+    DataEncoder::new().encode(Bytes::from(fun), buf)?;
+    OptionEncoder::<Bytes, DataEncoder>::new(DataEncoder::new()).encode(arg, buf)?;
     Ok(Codec::RecvStatus(Opcode::UserFunction))
+}
+
+fn write_user_hook(consistency: Consistency, hook: String, buf: &mut BytesMut) -> std::io::Result<Codec> {
+    write_opcode(Opcode::UserHook, buf)?;
+    write_consistency(consistency, buf)?;
+    DataEncoder::new().encode(Bytes::from(hook), buf)?;
+    Ok(Codec::RecvStatus(Opcode::UserHook))
 }
 
 impl Codec {
@@ -226,8 +234,8 @@ impl Encoder<Request> for Codec {
 
             *self = match req {
                 Request::Prologue{cluster_id} => write_prologue(cluster_id, buf)?,
-                Request::Hello{cluster_id, node_id} => write_hello(&cluster_id,
-                                                                   &node_id,
+                Request::Hello{cluster_id, node_id} => write_hello(cluster_id,
+                                                                   node_id,
                                                                    buf)?,
                 Request::WhoMaster => write_who_master(buf)?,
                 Request::Exists{consistency,
@@ -292,6 +300,7 @@ impl Encoder<Request> for Codec {
                 Request::DeletePrefix{prefix} => write_delete_op(Opcode::DeletePrefix,
                                                                  prefix,
                                                                  buf)?,
+                Request::UserHook{consistency, hook} => write_user_hook(consistency, hook, buf)?,
             };
 
             Ok(())
@@ -401,7 +410,8 @@ fn make_ok_status_decoder(opcode: Opcode) -> Box<dyn Decoder<Item=Response, Erro
         Opcode::WhoMaster => make_node_id_option_rsp_decoder(),
         Opcode::Exists => make_bool_rsp_decoder(),
         Opcode::Get => make_data_rsp_decoder(),
-        Opcode::Set | Opcode::Delete | Opcode::Sequence | Opcode::SyncedSequence  => make_ok_rsp_decoder(),
+        Opcode::Set | Opcode::Delete | Opcode::Sequence | Opcode::SyncedSequence | Opcode::UserHook =>
+            make_ok_rsp_decoder(),
         Opcode::Range | Opcode::PrefixKeys => make_data_vec_rsp_decoder(),
         Opcode::TestAndSet | Opcode::UserFunction => make_data_option_rsp_decoder(),
         Opcode::RangeEntries => make_data_pair_vec_rsp_decoder(),

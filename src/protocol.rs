@@ -11,7 +11,7 @@
 // limitations under the License.
 
 //! Types used for the Arakoon RPC protocol.
-use bytes::{Bytes,BytesMut};
+use bytes::{Bytes, BytesMut};
 use num;
 use std;
 use std::fmt::Display;
@@ -51,14 +51,24 @@ pub enum Consistency {
 /// The building blocks of sequences.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    Set { key: Bytes,
-          value: Bytes },
-    Delete { key: Bytes },
-    Assert { key: Bytes,
-             value: Option<Bytes> },
-    AssertExists { key: Bytes },
-    UserFunction { function: String,
-                   arg: Option<Bytes> },
+    Set {
+        key: Bytes,
+        value: Bytes,
+    },
+    Delete {
+        key: Bytes,
+    },
+    Assert {
+        key: Bytes,
+        value: Option<Bytes>,
+    },
+    AssertExists {
+        key: Bytes,
+    },
+    UserFunction {
+        function: String,
+        arg: Option<Bytes>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,42 +93,72 @@ pub enum Opcode {
 /// Request sent to the server.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
-    Prologue { cluster_id: ClusterId },
-    Hello { cluster_id: ClusterId,
-            node_id: NodeId },
+    Prologue {
+        cluster_id: ClusterId,
+    },
+    Hello {
+        cluster_id: ClusterId,
+        node_id: NodeId,
+    },
     WhoMaster,
-    Exists { consistency: Consistency,
-             key: Bytes },
-    Get { consistency: Consistency,
-          key: Bytes },
-    Set { key: Bytes,
-          value: Bytes },
-    Delete { key: Bytes },
-    Range { consistency: Consistency,
-            first_key: Option<Bytes>,
-            include_first: bool,
-            last_key: Option<Bytes>,
-            include_last: bool,
-            max_entries: i32 },
-    PrefixKeys { consistency: Consistency,
-                 prefix: Bytes,
-                 max_entries: i32 },
-    TestAndSet { key: Bytes,
-                 old: Option<Bytes>,
-                 new: Option<Bytes> },
-    RangeEntries { consistency: Consistency,
-                   first_key: Option<Bytes>,
-                   include_first: bool,
-                   last_key: Option<Bytes>,
-                   include_last: bool,
-                   max_entries: i32 },
-    Sequence { actions: Vec<Action> },
-    UserFunction { function: String,
-                   arg: Option<Bytes> },
-    SyncedSequence { actions: Vec<Action> },
-    DeletePrefix { prefix: Bytes },
-    UserHook { consistency: Consistency,
-               hook: String },
+    Exists {
+        consistency: Consistency,
+        key: Bytes,
+    },
+    Get {
+        consistency: Consistency,
+        key: Bytes,
+    },
+    Set {
+        key: Bytes,
+        value: Bytes,
+    },
+    Delete {
+        key: Bytes,
+    },
+    Range {
+        consistency: Consistency,
+        first_key: Option<Bytes>,
+        include_first: bool,
+        last_key: Option<Bytes>,
+        include_last: bool,
+        max_entries: i32,
+    },
+    PrefixKeys {
+        consistency: Consistency,
+        prefix: Bytes,
+        max_entries: i32,
+    },
+    TestAndSet {
+        key: Bytes,
+        old: Option<Bytes>,
+        new: Option<Bytes>,
+    },
+    RangeEntries {
+        consistency: Consistency,
+        first_key: Option<Bytes>,
+        include_first: bool,
+        last_key: Option<Bytes>,
+        include_last: bool,
+        max_entries: i32,
+    },
+    Sequence {
+        actions: Vec<Action>,
+    },
+    UserFunction {
+        function: String,
+        arg: Option<Bytes>,
+    },
+    SyncedSequence {
+        actions: Vec<Action>,
+    },
+    DeletePrefix {
+        prefix: Bytes,
+    },
+    UserHook {
+        consistency: Consistency,
+        hook: String,
+    },
 }
 
 /// Response codes sent back from the server side in case of errors.
@@ -153,13 +193,13 @@ impl From<i32> for ErrorCode {
 /// An error response received from the server.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorResponse {
-    pub code : ErrorCode,
-    pub message : String,
+    pub code: ErrorCode,
+    pub message: String,
 }
 
 impl ErrorResponse {
     pub fn new(code: ErrorCode, message: String) -> ErrorResponse {
-        ErrorResponse{code, message}
+        ErrorResponse { code, message }
     }
 }
 
@@ -175,5 +215,5 @@ pub enum Response {
     DataOption(Option<BytesMut>),
     DataVec(Vec<BytesMut>),
     DataPairVec(Vec<(BytesMut, BytesMut)>),
-    Count(u32)
+    Count(u32),
 }

@@ -10,14 +10,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[macro_use] extern crate log;
-#[macro_use] extern crate num_derive;
+#[macro_use]
+extern crate log;
+#[macro_use]
+extern crate num_derive;
 
-pub mod codec;
 pub mod client;
+pub mod codec;
 pub mod llio;
 pub mod protocol;
 
 // The official client interface.
-pub use crate::protocol::{Action, ClusterId, Consistency, ErrorCode, NodeId, Stamp};
 pub use crate::client::{ClusterConfig, Error, Node, NodeConfig};
+pub use crate::protocol::{Action, ClusterId, Consistency, ErrorCode, NodeId, Stamp};

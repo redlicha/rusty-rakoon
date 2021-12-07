@@ -13,72 +13,48 @@
 //! Arakoon client built on top of tokio.
 use crate::codec::*;
 use crate::protocol::{
-    Action,
-    ClusterId,
-    Consistency,
-    ErrorCode,
-    ErrorResponse,
-    NodeId,
-    Request,
-    Response,
+    Action, ClusterId, Consistency, ErrorCode, ErrorResponse, NodeId, Request, Response,
 };
 
-use bytes::{
-    Bytes,
-    BytesMut
-};
+use bytes::{Bytes, BytesMut};
 
-use futures_util::{
-    sink::{
-        SinkExt,
-    },
-};
+use futures_util::sink::SinkExt;
 
 use std::{
-    fmt::{
-        Display,
-    },
-    net::{
-        AddrParseError,
-        SocketAddr,
-    },
+    fmt::Display,
+    net::{AddrParseError, SocketAddr},
 };
 
 use tokio::{
-    net::{
-        TcpStream,
-    },
-    sync::{
-        mpsc,
-        oneshot
-    },
+    net::TcpStream,
+    sync::{mpsc, oneshot},
 };
 
 use tokio_stream::StreamExt;
 
-use tokio_util::codec::{
-    Decoder,
-};
+use tokio_util::codec::Decoder;
 
 use tower_service::Service;
 
 #[derive(Debug)]
 pub enum Error {
     ErrorResponse(ErrorCode, String),
-    IoError(std::io::Error)
+    IoError(std::io::Error),
 }
 
 impl Display for Error {
-    fn fmt(&self, f : &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match *self {
-            Error::ErrorResponse(ref code, ref msg) => write!(f, "Arakoon error response {:?} : {}", code, msg),
+            Error::ErrorResponse(ref code, ref msg) => {
+                write!(f, "Arakoon error response {:?} : {}", code, msg)
+            }
             Error::IoError(ref err) => write!(f, "I/O error: {}", err),
         }
     }
 }
 
 impl From<std::io::Error> for Error {
-    fn from(e : std::io::Error) -> Error {
+    fn from(e: std::io::Error) -> Error {
         Error::IoError(e)
     }
 }
@@ -86,29 +62,30 @@ impl From<std::io::Error> for Error {
 /// Config of an Arakoon cluster member.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeConfig {
-    pub node_id : NodeId,
-    pub address : SocketAddr,
+    pub node_id: NodeId,
+    pub address: SocketAddr,
 }
 
 impl NodeConfig {
     pub fn new(node_id: NodeId, addr: &str) -> std::result::Result<NodeConfig, AddrParseError> {
         let address = addr.parse()?;
-        Ok(NodeConfig{node_id,
-                      address})
+        Ok(NodeConfig { node_id, address })
     }
 }
 
 /// Config of an Arakoon cluster.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClusterConfig {
-    pub cluster_id : ClusterId,
-    pub node_configs : Vec<NodeConfig>,
+    pub cluster_id: ClusterId,
+    pub node_configs: Vec<NodeConfig>,
 }
 
 impl ClusterConfig {
     pub fn new(cluster_id: ClusterId, node_configs: Vec<NodeConfig>) -> ClusterConfig {
-        ClusterConfig{cluster_id,
-                      node_configs}
+        ClusterConfig {
+            cluster_id,
+            node_configs,
+        }
     }
 }
 
@@ -117,10 +94,13 @@ impl ClusterConfig {
 // response back to the client.
 type Message = (Request, oneshot::Sender<Result<Response, std::io::Error>>);
 
-async fn dispatch(cluster_id: ClusterId, tcp_stream: TcpStream, mut rx: mpsc::Receiver<Message>) ->
-    std::io::Result<()> {
+async fn dispatch(
+    cluster_id: ClusterId,
+    tcp_stream: TcpStream,
+    mut rx: mpsc::Receiver<Message>,
+) -> std::io::Result<()> {
     let mut framed = Codec::new().framed(tcp_stream);
-    framed.send(Request::Prologue{cluster_id}).await?;
+    framed.send(Request::Prologue { cluster_id }).await?;
 
     while let Some((req, tx)) = rx.recv().await {
         trace!("sending request {:?}", req);
@@ -138,15 +118,19 @@ async fn dispatch(cluster_id: ClusterId, tcp_stream: TcpStream, mut rx: mpsc::Re
                 tx.send(rsp)
             } else {
                 error!("other side of TCP conn gone");
-                tx.send(Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe,
-                                                "other side of TCP conn gone!?")))
+                tx.send(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "other side of TCP conn gone!?",
+                )))
             }
         };
 
         if let Err(e) = res {
-                error!("error forwarding response over channel: {:?}", e);
-                return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe,
-                                               "other side of channel gone!?"));
+            error!("error forwarding response over channel: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "other side of channel gone!?",
+            ));
         }
     }
 
@@ -161,41 +145,43 @@ pub struct Node {
 }
 
 macro_rules! call {
-    ($self:ident, $req:expr, $pat:pat => $res:expr) => (
+    ($self:ident, $req:expr, $pat:pat => $res:expr) => {
         match $self.call($req).await {
             $pat => $res,
-            Ok(Response::Error(ErrorResponse{code, message})) =>
-                Err(Error::ErrorResponse(code, message)),
-            Ok(_) => Err(Error::ErrorResponse(ErrorCode::UnknownErrorCode,
-                                              "server sent unexpected response".to_string())),
+            Ok(Response::Error(ErrorResponse { code, message })) => {
+                Err(Error::ErrorResponse(code, message))
+            }
+            Ok(_) => Err(Error::ErrorResponse(
+                ErrorCode::UnknownErrorCode,
+                "server sent unexpected response".to_string(),
+            )),
             Err(e) => Err(Error::IoError(e)),
         }
-    )
+    };
 }
 
 /// Client for a specific arakoon cluster node, implements the
 /// `tower_service::Service` trait.
 impl Node {
-    pub async fn connect(cluster_id: ClusterId,
-                         node_config: &NodeConfig) -> std::io::Result<Node> {
+    pub async fn connect(cluster_id: ClusterId, node_config: &NodeConfig) -> std::io::Result<Node> {
         info!("connecting to {}", node_config.node_id);
 
         let (tx, rx) = mpsc::channel(1);
         let tcp_stream = TcpStream::connect(node_config.address).await?;
         let cid = cluster_id.clone();
         let task_handle = tokio::task::spawn(async move {
-            dispatch(cid, tcp_stream, rx)
-                .await
-                .map_err(|e| {
-                    error!("dispatch returned error: {:?}", e);
-                    e
-                })
+            dispatch(cid, tcp_stream, rx).await.map_err(|e| {
+                error!("dispatch returned error: {:?}", e);
+                e
+            })
         });
 
-        Ok(Node{cluster_id,
-                node_id: node_config.node_id.clone(),
-                tx,
-                _task_handle: task_handle})
+        Ok(Node {
+            cluster_id,
+            node_id: node_config.node_id.clone(),
+            tx,
+            _task_handle: task_handle,
+        })
     }
 
     pub async fn who_master(&mut self) -> std::result::Result<Option<NodeId>, Error> {
@@ -211,19 +197,31 @@ impl Node {
               Ok(Response::String(s)) => Ok(s))
     }
 
-    pub async fn exists(&mut self, consistency: Consistency, key: &'_ Bytes) -> std::result::Result<bool, Error> {
+    pub async fn exists(
+        &mut self,
+        consistency: Consistency,
+        key: &'_ Bytes,
+    ) -> std::result::Result<bool, Error> {
         call!(self,
               Request::Exists{consistency, key: key.clone()},
               Ok(Response::Bool(b)) => Ok(b))
     }
 
-    pub async fn set(&mut self, key: &'_ Bytes, value: &'_ Bytes) -> std::result::Result<(), Error> {
+    pub async fn set(
+        &mut self,
+        key: &'_ Bytes,
+        value: &'_ Bytes,
+    ) -> std::result::Result<(), Error> {
         call!(self,
               Request::Set{key: key.clone(), value: value.clone()},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn get(&mut self, consistency: Consistency, key: &'_ Bytes) -> std::result::Result<BytesMut, Error> {
+    pub async fn get(
+        &mut self,
+        consistency: Consistency,
+        key: &'_ Bytes,
+    ) -> std::result::Result<BytesMut, Error> {
         call!(self,
               Request::Get{consistency, key: key.clone()},
               Ok(Response::Data(val)) => Ok(val))
@@ -235,8 +233,12 @@ impl Node {
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn test_and_set(&mut self, key: &'_ Bytes, old: Option<&'_ Bytes>, new: Option<&'_ Bytes>)
-                              -> std::result::Result<Option<BytesMut>, Error> {
+    pub async fn test_and_set(
+        &mut self,
+        key: &'_ Bytes,
+        old: Option<&'_ Bytes>,
+        new: Option<&'_ Bytes>,
+    ) -> std::result::Result<Option<BytesMut>, Error> {
         call!(self,
               Request::TestAndSet{key: key.clone(),
 				  old: old.map(Bytes::clone),
@@ -250,14 +252,21 @@ impl Node {
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn synced_sequence(&mut self, actions: &'_ [Action]) -> std::result::Result<(), Error> {
+    pub async fn synced_sequence(
+        &mut self,
+        actions: &'_ [Action],
+    ) -> std::result::Result<(), Error> {
         call!(self,
               Request::SyncedSequence{actions: Vec::from(actions)},
               Ok(Response::Ok) => Ok(()))
     }
 
-    pub async fn prefix_keys(&mut self, consistency: Consistency, prefix: &'_ Bytes, max_entries: i32)
-                             -> std::result::Result<Vec<BytesMut>, Error> {
+    pub async fn prefix_keys(
+        &mut self,
+        consistency: Consistency,
+        prefix: &'_ Bytes,
+        max_entries: i32,
+    ) -> std::result::Result<Vec<BytesMut>, Error> {
         call!(self,
               Request::PrefixKeys{consistency, prefix: prefix.clone(), max_entries},
               Ok(Response::DataVec(vec)) => Ok(vec))
@@ -269,13 +278,15 @@ impl Node {
               Ok(Response::Count(n)) => Ok(n))
     }
 
-    pub async fn range(&mut self,
-                       consistency: Consistency,
-                       first_key: Option<&'_ Bytes>,
-                       include_first: bool,
-                       last_key: Option<&'_ Bytes>,
-                       include_last: bool,
-                       max_entries: i32) -> std::result::Result<Vec<BytesMut>, Error> {
+    pub async fn range(
+        &mut self,
+        consistency: Consistency,
+        first_key: Option<&'_ Bytes>,
+        include_first: bool,
+        last_key: Option<&'_ Bytes>,
+        include_last: bool,
+        max_entries: i32,
+    ) -> std::result::Result<Vec<BytesMut>, Error> {
         call!(self,
               Request::Range{consistency,
                              first_key: first_key.map(Bytes::clone),
@@ -286,13 +297,15 @@ impl Node {
               Ok(Response::DataVec(vec)) => Ok(vec))
     }
 
-    pub async fn range_entries(&mut self,
-                               consistency: Consistency,
-                               first_key: Option<&'_ Bytes>,
-                               include_first: bool,
-                               last_key: Option<&'_ Bytes>,
-                               include_last: bool,
-                               max_entries: i32) -> std::result::Result<Vec<(BytesMut, BytesMut)>, Error> {
+    pub async fn range_entries(
+        &mut self,
+        consistency: Consistency,
+        first_key: Option<&'_ Bytes>,
+        include_first: bool,
+        last_key: Option<&'_ Bytes>,
+        include_last: bool,
+        max_entries: i32,
+    ) -> std::result::Result<Vec<(BytesMut, BytesMut)>, Error> {
         call!(self,
               Request::RangeEntries{consistency,
                                     first_key: first_key.map(Bytes::clone),
@@ -303,15 +316,21 @@ impl Node {
               Ok(Response::DataPairVec(vec)) => Ok(vec))
     }
 
-    pub async fn user_function(&mut self, function: &'_ str, arg: Option<&'_ Bytes>)
-                               -> std::result::Result<Option<BytesMut>, Error> {
+    pub async fn user_function(
+        &mut self,
+        function: &'_ str,
+        arg: Option<&'_ Bytes>,
+    ) -> std::result::Result<Option<BytesMut>, Error> {
         call!(self,
               Request::UserFunction{function: String::from(function), arg: arg.map(Bytes::clone)},
               Ok(Response::DataOption(opt)) => Ok(opt))
     }
 
-    pub async fn user_hook(&mut self, consistency: Consistency, hook: &'_ str)
-                           -> std::result::Result<(), Error> {
+    pub async fn user_hook(
+        &mut self,
+        consistency: Consistency,
+        hook: &'_ str,
+    ) -> std::result::Result<(), Error> {
         call!(self,
               Request::UserHook{consistency, hook: String::from(hook)},
               Ok(Response::Ok) => Ok(()))
@@ -322,9 +341,13 @@ impl Node {
 impl Service<Request> for Node {
     type Response = Response;
     type Error = std::io::Error;
-    type Future = std::pin::Pin<Box<dyn std::future::Future<Output=Result<Self::Response, Self::Error>>>>;
+    type Future =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
         debug!("poll_ready called");
         std::task::Poll::Ready(Ok(()))
     }
@@ -335,24 +358,23 @@ impl Service<Request> for Node {
 
         let fut = async move {
             match sender.send((req, tx)).await {
-                Ok(()) => {
-                    match rx.await {
-                        Ok(rsp) => {
-                            rsp
-                        },
-                        Err(e) => {
-                            error!("failed to get response from task: {:?}", e);
-                            Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe,
-                                                    "call: failed to recv - other side gone!?"))
-                        },
+                Ok(()) => match rx.await {
+                    Ok(rsp) => rsp,
+                    Err(e) => {
+                        error!("failed to get response from task: {:?}", e);
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "call: failed to recv - other side gone!?",
+                        ))
                     }
                 },
                 Err(e) => {
                     error!("failed to send request to task: {:?}", e);
-                    Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe,
-                                            "call: failed to recv - other side gone!?"))
-
-                },
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "call: failed to recv - other side gone!?",
+                    ))
+                }
             }
         };
 

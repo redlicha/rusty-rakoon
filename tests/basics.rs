@@ -19,7 +19,7 @@ mod test {
 	Bytes,
 	BytesMut
     };
-    use env_logger;
+
     use rand::{
         thread_rng,
         distributions::{
@@ -44,7 +44,6 @@ mod test {
             BufWriter,
             Write,
         },
-        os::unix,
         path::{
             Path,
             PathBuf,
@@ -62,7 +61,7 @@ mod test {
         },
     };
 
-    use uuid;
+
 
     fn get_env_or_default<T: str::FromStr + Clone>(name : &str, default : &T) -> T {
         if let Some(s) = std::env::var_os(name) {
@@ -146,8 +145,8 @@ mod test {
 
     impl ArakoonNode {
         fn new(node_id : &NodeId,
-               root : &PathBuf,
-               binary : &PathBuf) -> ArakoonNode {
+               root : &Path,
+               binary : &Path) -> ArakoonNode {
             let home = ArakoonNode::node_home(root,
                                               node_id);
             std::fs::create_dir_all(&home).unwrap();
@@ -155,11 +154,11 @@ mod test {
                          client_port: Port::new(),
                          messaging_port: Port::new(),
                          home,
-                         binary : binary.clone(),
+                         binary : binary.to_path_buf(),
                          child : None }
         }
 
-        fn node_home(root : &PathBuf, node_id : &NodeId) -> PathBuf {
+        fn node_home(root : &Path, node_id : &NodeId) -> PathBuf {
             root.join(&node_id.to_string())
         }
 
@@ -176,7 +175,7 @@ mod test {
                             &self.address()).expect("fix yer test")
         }
 
-        fn wait_for_service(&self, retries : usize) -> () {
+        fn wait_for_service(&self, retries : usize) {
             for i in 0..(retries + 1) {
                 let res = std::net::TcpStream::connect(&self.address() as &str);
                 match res {
@@ -184,7 +183,7 @@ mod test {
                         info!("{} found running after {} retries",
                               self.node_id,
                               i);
-                        return ();
+                        return ;
                     },
                     Err(e) => if i == retries {
                         panic!("{} still not found running after {} retries: {}",
@@ -265,7 +264,7 @@ mod test {
                 std::fs::remove_dir_all(&home).expect("failed to remove test directory");
             }
 
-            let mut cluster = ArakoonCluster{cluster_id: cluster_id.clone(),
+            let mut cluster = ArakoonCluster{cluster_id,
                                              home,
                                              nodes: BTreeMap::new()};
 
@@ -312,12 +311,12 @@ mod test {
                 }
                 write!(w, "{}", node.node_id)?
             }
-            writeln!(w, "")?;
+            writeln!(w)?;
 
             let (_, master) = self.nodes.iter().next().unwrap();
             writeln!(w, "master = {}", master.node_id)?;
             writeln!(w, "preferred_master = true")?;
-            writeln!(w, "")?;
+            writeln!(w)?;
 
             for node in self.nodes.values() {
                 writeln!(w, "[{}]", node.node_id)?;
@@ -478,7 +477,7 @@ mod test {
         let mut master = fixture.connect_to_master().await;
         let key = Bytes::from(&b"key"[..]);
         let res = master.exists(Consistency::Consistent, &key).await.unwrap();
-        assert_eq!(false, res);
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -543,7 +542,7 @@ mod test {
             .exists(Consistency::Consistent, &key)
             .await
             .expect("'exists' returned error");
-        assert_eq!(true, res);
+        assert!(res);
     }
 
     #[tokio::test]
@@ -555,7 +554,7 @@ mod test {
         master.set(&key, &val).await.expect("'set' returned error");
         master.delete(&key).await.expect("'delete' returned error");
         let res = master.exists(Consistency::Consistent, &key).await.expect("'exists' returned error");
-        assert_eq!(false, res);
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -574,7 +573,7 @@ mod test {
         let res = master.exists(Consistency::Consistent, &key)
             .await
             .expect("'exists' returned error for inexistent key");
-        assert_eq!(false, res);
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -658,7 +657,7 @@ mod test {
         let mut master = fixture.connect_to_master().await;
         let key = Bytes::from(&b"key"[..]);
         let res = master.sequence(&[Action::AssertExists{key}]).await;
-        assert_eq!(true, res.is_err());
+        assert!(res.is_err());
         let err = res.err().unwrap();
         match err {
             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
@@ -690,7 +689,7 @@ mod test {
             .sequence(&[Action::Assert{key: key.clone(), value: Some(val.clone())},
                         Action::Set{key: key.clone(), value: val.clone()}])
             .await;
-        assert_eq!(true, res.is_err());
+        assert!(res.is_err());
         let err = res.err().unwrap();
         match err {
             Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
@@ -876,6 +875,6 @@ mod test {
             .await
             .expect("'prefix_keys' failed");
 
-        assert_eq!(true, vec.is_empty());
+        assert!(vec.is_empty());
     }
 }

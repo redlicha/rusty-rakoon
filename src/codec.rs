@@ -136,6 +136,7 @@ fn write_delete_op(opcode: Opcode, key: Bytes, buf: &mut BytesMut) -> std::io::R
     Ok(Codec::RecvStatus(opcode))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_range_op(opcode: Opcode,
                   consistency: Consistency,
                   first_key: Option<Bytes>,

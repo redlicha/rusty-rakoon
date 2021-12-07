@@ -318,6 +318,7 @@ impl Node {
     }
 }
 
+#[allow(clippy::type_complexity)]
 impl Service<Request> for Node {
     type Response = Response;
     type Error = std::io::Error;

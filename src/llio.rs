@@ -727,6 +727,7 @@ mod test {
 			identity);
     }
 
+    #[allow(clippy::identity_op)]
     #[test]
     fn test_i32_roundtrip() {
         test_happy_path(&mut I32Encoder::new(),
@@ -736,6 +737,7 @@ mod test {
 			identity);
     }
 
+    #[allow(clippy::identity_op)]
     #[test]
     fn test_i64_happy_path() {
         test_happy_path(&mut I64Encoder::new(),

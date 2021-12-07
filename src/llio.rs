@@ -31,8 +31,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
 use std;
-use std::marker::PhantomData;
 use std::io::Cursor;
+use std::marker::PhantomData;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct I8Encoder;
@@ -130,7 +130,7 @@ impl Decoder for I32Decoder {
             Ok(None)
         } else {
             let res = Cursor::new(&mut *buf).get_i32_le();
-            let _= buf.split_to(s);
+            let _ = buf.split_to(s);
             Ok(Some(res))
         }
     }
@@ -189,19 +189,25 @@ impl Decoder for I64Decoder {
 
 /// Fun with monads: inject a value.
 pub struct ReturnDecoder<T>
-where T: Clone {
-    item: T
+where
+    T: Clone,
+{
+    item: T,
 }
 
 impl<T> ReturnDecoder<T>
-where T: Clone {
+where
+    T: Clone,
+{
     pub fn new(item: T) -> ReturnDecoder<T> {
-        ReturnDecoder{item}
+        ReturnDecoder { item }
     }
 }
 
 impl<T> Decoder for ReturnDecoder<T>
-where T: Clone {
+where
+    T: Clone,
+{
     type Item = T;
     type Error = std::io::Error;
 
@@ -212,20 +218,29 @@ where T: Clone {
 
 /// Fun with monads: bind.
 pub struct BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> + Send {
+where
+    D: Decoder<Error = std::io::Error> + Send,
+{
     decoder: D,
-    fun : Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>,
+    fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>,
 }
 
 impl<T, D> BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> + Send {
-    pub fn new(decoder: D, fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>) -> BindDecoder<T, D> {
-        BindDecoder{decoder, fun}
+where
+    D: Decoder<Error = std::io::Error> + Send,
+{
+    pub fn new(
+        decoder: D,
+        fun: Box<dyn Fn(D::Item) -> std::io::Result<Option<T>> + Send>,
+    ) -> BindDecoder<T, D> {
+        BindDecoder { decoder, fun }
     }
 }
 
 impl<T, D> Decoder for BindDecoder<T, D>
-where D: Decoder<Error=std::io::Error> + Send {
+where
+    D: Decoder<Error = std::io::Error> + Send,
+{
     type Item = T;
     type Error = D::Error;
 
@@ -251,7 +266,7 @@ impl Encoder<bool> for BoolEncoder {
     type Error = std::io::Error;
 
     fn encode(&mut self, req: bool, buf: &mut BytesMut) -> std::io::Result<()> {
-        I8Encoder.encode( if req { 0x1i8 } else { 0x0i8 }, buf)
+        I8Encoder.encode(if req { 0x1i8 } else { 0x0i8 }, buf)
     }
 }
 
@@ -313,8 +328,10 @@ impl Decoder for BoolDecoder {
         match I8Decoder.decode(buf)? {
             Some(0x0) => Ok(Some(false)),
             Some(0x1) => Ok(Some(true)),
-            Some(_) => Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
-                                               "unexpected byte sequence, expected bool")),
+            Some(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unexpected byte sequence, expected bool",
+            )),
             None => Ok(None),
         }
     }
@@ -368,10 +385,12 @@ impl DataDecoder {
             Some(len) if len >= 0 => Ok(Some(len as usize)),
             Some(len) => {
                 assert!(len < 0);
-                Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
-                                        "data buffer length < 0!?"))
-            },
-            None => Ok(None)
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "data buffer length < 0!?",
+                ))
+            }
+            None => Ok(None),
         }
     }
 
@@ -396,19 +415,17 @@ impl Decoder for DataDecoder {
 
     fn decode(&mut self, buf: &mut BytesMut) -> std::io::Result<Option<Self::Item>> {
         let len = match *self {
-            DataDecoder::Length => {
-                match DataDecoder::decode_length(buf)? {
-                    Some(n) => {
-                        *self = DataDecoder::Value(n);
-                        if buf.len() < n {
-                            buf.reserve(n);
-                        }
-                        n
+            DataDecoder::Length => match DataDecoder::decode_length(buf)? {
+                Some(n) => {
+                    *self = DataDecoder::Value(n);
+                    if buf.len() < n {
+                        buf.reserve(n);
                     }
-                    None => return Ok(None),
+                    n
                 }
-            }
-            DataDecoder::Value(n) => n
+                None => return Ok(None),
+            },
+            DataDecoder::Value(n) => n,
         };
 
         match DataDecoder::decode_value(buf, len)? {
@@ -416,7 +433,7 @@ impl Decoder for DataDecoder {
                 *self = DataDecoder::Length;
                 Ok(Some(data))
             }
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 }
@@ -429,17 +446,21 @@ pub struct OptionEncoder<T, E: Encoder<T>> {
 }
 
 impl<T, E> OptionEncoder<T, E>
-where E: Encoder<T> {
+where
+    E: Encoder<T>,
+{
     pub fn new(encoder: E) -> OptionEncoder<T, E> {
-        OptionEncoder{
+        OptionEncoder {
             encoder,
-            _marker: PhantomData{}
+            _marker: PhantomData {},
         }
     }
 }
 
 impl<T, E> Encoder<std::option::Option<T>> for OptionEncoder<T, E>
-where E: Encoder<T, Error = std::io::Error> {
+where
+    E: Encoder<T, Error = std::io::Error>,
+{
     type Error = E::Error;
 
     fn encode(&mut self, val: std::option::Option<T>, buf: &mut BytesMut) -> std::io::Result<()> {
@@ -461,21 +482,29 @@ enum OptionDecoderState {
 /// Decoder combinator for option types.
 #[derive(Clone, Copy, Debug)]
 pub struct OptionDecoder<T>
-where T: Decoder {
+where
+    T: Decoder,
+{
     decoder: T,
     state: OptionDecoderState,
 }
 
 impl<T> OptionDecoder<T>
-where T: Decoder {
+where
+    T: Decoder,
+{
     pub fn new(decoder: T) -> OptionDecoder<T> {
-        OptionDecoder{decoder,
-                      state: OptionDecoderState::Bool}
+        OptionDecoder {
+            decoder,
+            state: OptionDecoderState::Bool,
+        }
     }
 }
 
 impl<T> Decoder for OptionDecoder<T>
-where T: Decoder<Error = std::io::Error> {
+where
+    T: Decoder<Error = std::io::Error>,
+{
     type Item = Option<T::Item>;
     type Error = T::Error;
 
@@ -504,21 +533,25 @@ where T: Decoder<Error = std::io::Error> {
 #[derive(Clone, Copy, Debug)]
 pub struct VectorEncoder<T, E: Encoder<T>> {
     encoder: E,
-    _marker: PhantomData<T>
+    _marker: PhantomData<T>,
 }
 
 impl<T, E> VectorEncoder<T, E>
-where E: Encoder<T> {
+where
+    E: Encoder<T>,
+{
     pub fn new(encoder: E) -> VectorEncoder<T, E> {
-        VectorEncoder{
+        VectorEncoder {
             encoder,
-            _marker: PhantomData{}
+            _marker: PhantomData {},
         }
     }
 }
 
 impl<T, E> Encoder<std::vec::Vec<T>> for VectorEncoder<T, E>
-where E: Encoder<T, Error = std::io::Error> {
+where
+    E: Encoder<T, Error = std::io::Error>,
+{
     type Error = E::Error;
 
     fn encode(&mut self, val: std::vec::Vec<T>, buf: &mut BytesMut) -> std::io::Result<()> {
@@ -540,7 +573,9 @@ enum VectorDecoderState {
 /// Decoder combinator for vector types.
 #[derive(Clone, Debug)]
 pub struct VectorDecoder<T>
-where T: Decoder {
+where
+    T: Decoder,
+{
     decoder: T,
     reverse: bool,
     state: VectorDecoderState,
@@ -548,17 +583,23 @@ where T: Decoder {
 }
 
 impl<T> VectorDecoder<T>
-where T: Decoder {
-    pub fn new(decoder : T, reverse: bool) -> VectorDecoder<T> {
-        VectorDecoder{decoder,
-                      reverse,
-                      state: VectorDecoderState::Length,
-                      vec: Vec::new()}
+where
+    T: Decoder,
+{
+    pub fn new(decoder: T, reverse: bool) -> VectorDecoder<T> {
+        VectorDecoder {
+            decoder,
+            reverse,
+            state: VectorDecoderState::Length,
+            vec: Vec::new(),
+        }
     }
 }
 
 impl<T> Decoder for VectorDecoder<T>
-where T: Decoder<Error = std::io::Error> {
+where
+    T: Decoder<Error = std::io::Error>,
+{
     type Item = Vec<T::Item>;
     type Error = T::Error;
 
@@ -566,8 +607,12 @@ where T: Decoder<Error = std::io::Error> {
         if self.state == VectorDecoderState::Length {
             match I32Decoder.decode(buf)? {
                 None => return Ok(None),
-                Some(len) if len < 0 => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
-                                                                       "vector length < 0!?")),
+                Some(len) if len < 0 => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "vector length < 0!?",
+                    ))
+                }
                 Some(len) => self.state = VectorDecoderState::Values(len as usize),
             }
         }
@@ -583,16 +628,14 @@ where T: Decoder<Error = std::io::Error> {
                         self.vec.reverse();
                     }
                     return Ok(Some(self.vec.split_off(0)));
-                },
-                VectorDecoderState::Values(left) => {
-                    match self.decoder.decode(buf)? {
-                        None => return Ok(None),
-                        Some(item) => {
-                            self.vec.push(item);
-                            self.state = VectorDecoderState::Values(left - 1);
-                        }
-                    }
                 }
+                VectorDecoderState::Values(left) => match self.decoder.decode(buf)? {
+                    None => return Ok(None),
+                    Some(item) => {
+                        self.vec.push(item);
+                        self.state = VectorDecoderState::Values(left - 1);
+                    }
+                },
             }
         }
     }
@@ -607,24 +650,24 @@ pub struct PairEncoder<F, S, EF, ES> {
 }
 
 impl<F, S, EF, ES> PairEncoder<F, S, EF, ES> {
-        pub fn new(first_encoder: EF, second_encoder: ES) -> PairEncoder<F, S, EF, ES> {
-            PairEncoder{
-                first_encoder,
-                second_encoder,
-                _first_marker: PhantomData{},
-                _second_marker: PhantomData{}
-            }
+    pub fn new(first_encoder: EF, second_encoder: ES) -> PairEncoder<F, S, EF, ES> {
+        PairEncoder {
+            first_encoder,
+            second_encoder,
+            _first_marker: PhantomData {},
+            _second_marker: PhantomData {},
         }
     }
+}
 
-impl<F, S, EF, ES> Encoder<(F, S)> for
-    PairEncoder<F, S, EF, ES>
+impl<F, S, EF, ES> Encoder<(F, S)> for PairEncoder<F, S, EF, ES>
 where
     EF: Encoder<F, Error = std::io::Error>,
-    ES: Encoder<S, Error = std::io::Error> {
-        type Error = EF::Error;
+    ES: Encoder<S, Error = std::io::Error>,
+{
+    type Error = EF::Error;
 
-        fn encode(&mut self, val: (F, S), buf: &mut BytesMut) -> std::io::Result<()> {
+    fn encode(&mut self, val: (F, S), buf: &mut BytesMut) -> std::io::Result<()> {
         let (fst, snd) = val;
         self.first_encoder.encode(fst, buf)?;
         self.second_encoder.encode(snd, buf)?;
@@ -634,32 +677,47 @@ where
 
 #[derive(Debug, Clone, PartialEq)]
 enum PairDecoderState<F>
-where F: PartialEq {
+where
+    F: PartialEq,
+{
     First,
     // use Option::take to move the value out
-    Second(Option<F>)
+    Second(Option<F>),
 }
 
 #[derive(Debug, Clone)]
 pub struct PairDecoder<F, S>
-where F: Decoder, F::Item: PartialEq, S: Decoder {
+where
+    F: Decoder,
+    F::Item: PartialEq,
+    S: Decoder,
+{
     first_decoder: F,
     second_decoder: S,
     state: PairDecoderState<F::Item>,
 }
 
-impl <F, S> PairDecoder<F, S>
-where F: Decoder, F::Item: PartialEq, S: Decoder {
+impl<F, S> PairDecoder<F, S>
+where
+    F: Decoder,
+    F::Item: PartialEq,
+    S: Decoder,
+{
     pub fn new(first_decoder: F, second_decoder: S) -> PairDecoder<F, S> {
-        PairDecoder{first_decoder,
-                    second_decoder,
-                    state: PairDecoderState::First,
+        PairDecoder {
+            first_decoder,
+            second_decoder,
+            state: PairDecoderState::First,
         }
     }
 }
 
 impl<F, S> Decoder for PairDecoder<F, S>
-where F: Decoder<Error = std::io::Error>, F::Item: PartialEq, S: Decoder<Error = std::io::Error> {
+where
+    F: Decoder<Error = std::io::Error>,
+    F::Item: PartialEq,
+    S: Decoder<Error = std::io::Error>,
+{
     type Item = (F::Item, S::Item);
     type Error = S::Error;
 
@@ -677,8 +735,7 @@ where F: Decoder<Error = std::io::Error>, F::Item: PartialEq, S: Decoder<Error =
                 assert!(fst.is_some());
                 match self.second_decoder.decode(buf)? {
                     None => return Ok(None),
-                    Some(snd) => Ok(Some((fst.take().unwrap(),
-                                          snd)))
+                    Some(snd) => Ok(Some((fst.take().unwrap(), snd))),
                 }
             } else {
                 unreachable!();
@@ -697,16 +754,14 @@ mod test {
     use std::convert::identity;
     use std::fmt::Debug;
 
-    fn test_happy_path<E, D, F, I, O>(encoder: &mut E,
-				   decoder: &mut D,
-				   fst: I,
-				   snd: I,
-				   conv: F)
-    where E: Encoder<I, Error=std::io::Error>,
-          D: Decoder<Item=O, Error=std::io::Error>,
-          I: Clone + Debug + PartialEq,
-	  O: Debug,
-	  F: Fn (O) -> I, {
+    fn test_happy_path<E, D, F, I, O>(encoder: &mut E, decoder: &mut D, fst: I, snd: I, conv: F)
+    where
+        E: Encoder<I, Error = std::io::Error>,
+        D: Decoder<Item = O, Error = std::io::Error>,
+        I: Clone + Debug + PartialEq,
+        O: Debug,
+        F: Fn(O) -> I,
+    {
         let mut buf = BytesMut::new();
         assert!(buf.is_empty());
         assert!(encoder.encode(fst.clone(), &mut buf).is_ok());
@@ -717,41 +772,44 @@ mod test {
         assert!(buf.is_empty());
     }
 
-
     #[test]
     fn test_i8_happy_path() {
-        test_happy_path(&mut I8Encoder::new(),
-			&mut I8Decoder::new(),
-			1,
-			2,
-			identity);
+        test_happy_path(&mut I8Encoder::new(), &mut I8Decoder::new(), 1, 2, identity);
     }
 
+    #[allow(clippy::identity_op)]
     #[test]
     fn test_i32_roundtrip() {
-        test_happy_path(&mut I32Encoder::new(),
-                        &mut I32Decoder::new(),
-                        (1i32 << 31) + 2,
-                        (2i32 << 31) + 3,
-			identity);
+        test_happy_path(
+            &mut I32Encoder::new(),
+            &mut I32Decoder::new(),
+            (1i32 << 31) + 2,
+            (2i32 << 31) + 3,
+            identity,
+        );
     }
 
+    #[allow(clippy::identity_op)]
     #[test]
     fn test_i64_happy_path() {
-        test_happy_path(&mut I64Encoder::new(),
-                        &mut I64Decoder::new(),
-                        (1i64 << 63) + 2,
-                        (2i64 << 63) + 3,
-			identity);
+        test_happy_path(
+            &mut I64Encoder::new(),
+            &mut I64Decoder::new(),
+            (1i64 << 63) + 2,
+            (2i64 << 63) + 3,
+            identity,
+        );
     }
 
     #[test]
     fn test_bool_happy_path() {
-        test_happy_path(&mut BoolEncoder::new(),
-			&mut BoolDecoder::new(),
-			true,
-			false,
-			identity);
+        test_happy_path(
+            &mut BoolEncoder::new(),
+            &mut BoolDecoder::new(),
+            true,
+            false,
+            identity,
+        );
     }
 
     #[test]
@@ -765,29 +823,35 @@ mod test {
 
     #[test]
     fn test_optional_i32_happy_path() {
-        test_happy_path(&mut OptionEncoder::new(I32Encoder::new()),
-                        &mut OptionDecoder::new(I32Decoder::new()),
-                        None,
-                        Some(1i32),
-			identity);
+        test_happy_path(
+            &mut OptionEncoder::new(I32Encoder::new()),
+            &mut OptionDecoder::new(I32Decoder::new()),
+            None,
+            Some(1i32),
+            identity,
+        );
     }
 
     #[test]
     fn test_pair_happy_path() {
-        test_happy_path(&mut PairEncoder::new(I8Encoder::new(), BoolEncoder::new()),
-                        &mut PairDecoder::new(I8Decoder::new(), BoolDecoder::new()),
-                        (23i8, false),
-                        (42i8, true),
-			identity);
+        test_happy_path(
+            &mut PairEncoder::new(I8Encoder::new(), BoolEncoder::new()),
+            &mut PairDecoder::new(I8Decoder::new(), BoolDecoder::new()),
+            (23i8, false),
+            (42i8, true),
+            identity,
+        );
     }
 
     #[test]
     fn test_vector_happy_path() {
-        test_happy_path(&mut VectorEncoder::new(I32Encoder::new()),
-                        &mut VectorDecoder::new(I32Decoder::new(), false),
-                        vec![1i32, 2i32, 3i32],
-                        vec![4i32, 5i32, 6i32],
-			identity);
+        test_happy_path(
+            &mut VectorEncoder::new(I32Encoder::new()),
+            &mut VectorDecoder::new(I32Decoder::new(), false),
+            vec![1i32, 2i32, 3i32],
+            vec![4i32, 5i32, 6i32],
+            identity,
+        );
     }
 
     #[test]
@@ -795,16 +859,20 @@ mod test {
         let mut buf = BytesMut::new();
         assert!(buf.is_empty());
         assert!(I32Encoder::new().encode(-1i32, &mut buf).is_ok());
-        assert!(VectorDecoder::new(I32Decoder::new(), false).decode(&mut buf).is_err());
+        assert!(VectorDecoder::new(I32Decoder::new(), false)
+            .decode(&mut buf)
+            .is_err());
     }
 
     #[test]
     fn test_vector_empty() {
-        test_happy_path(&mut VectorEncoder::new(I32Encoder::new()),
-                        &mut VectorDecoder::new(I32Decoder::new(), false),
-                        vec![],
-                        vec![],
-			identity);
+        test_happy_path(
+            &mut VectorEncoder::new(I32Encoder::new()),
+            &mut VectorDecoder::new(I32Decoder::new(), false),
+            vec![],
+            vec![],
+            identity,
+        );
     }
 
     #[test]
@@ -815,11 +883,13 @@ mod test {
         let mut snd = BytesMut::with_capacity(32);
         snd.put(&b"second"[..]);
 
-        test_happy_path(&mut DataEncoder::new(),
-                        &mut DataDecoder::new(),
-                        fst.freeze(),
-                        snd.freeze(),
-			BytesMut::freeze)
+        test_happy_path(
+            &mut DataEncoder::new(),
+            &mut DataDecoder::new(),
+            fst.freeze(),
+            snd.freeze(),
+            BytesMut::freeze,
+        )
     }
 
     #[test]
@@ -835,13 +905,15 @@ mod test {
         let mut fst = BytesMut::with_capacity(32);
         fst.put(&b"first"[..]);
 
-        test_happy_path(&mut OptionEncoder::new(DataEncoder::new()),
-                        &mut OptionDecoder::new(DataDecoder::new()),
-                        Some(fst.freeze()),
-                        None,
-			|o: std::option::Option<BytesMut>| -> std::option::Option<Bytes> {
-			    o.map(BytesMut::freeze)
-			});
+        test_happy_path(
+            &mut OptionEncoder::new(DataEncoder::new()),
+            &mut OptionDecoder::new(DataDecoder::new()),
+            Some(fst.freeze()),
+            None,
+            |o: std::option::Option<BytesMut>| -> std::option::Option<Bytes> {
+                o.map(BytesMut::freeze)
+            },
+        );
     }
 
     #[test]
@@ -850,8 +922,7 @@ mod test {
         let msg = "injected value".to_owned();
         let mut decoder = ReturnDecoder::<String>::new(msg.clone());
         assert!(buf.is_empty());
-        assert_eq!(msg,
-                   decoder.decode(&mut buf).unwrap().unwrap());
+        assert_eq!(msg, decoder.decode(&mut buf).unwrap().unwrap());
         assert!(buf.is_empty());
     }
 
@@ -859,14 +930,12 @@ mod test {
     fn test_bind_decoder() {
         let mut buf = BytesMut::new();
         let n = 21;
-        let fun = |val| { Ok(Some(val as i32 * 2)) };
+        let fun = |val| Ok(Some(val as i32 * 2));
         let expected = fun(n);
         type Decoder = BindDecoder<i32, ReturnDecoder<i16>>;
-        let mut decoder = Decoder::new(ReturnDecoder::new(n),
-                                       Box::new(fun));
+        let mut decoder = Decoder::new(ReturnDecoder::new(n), Box::new(fun));
         assert!(buf.is_empty());
-        assert_eq!(expected.unwrap(),
-                   decoder.decode(&mut buf).unwrap());
+        assert_eq!(expected.unwrap(), decoder.decode(&mut buf).unwrap());
         assert!(buf.is_empty());
     }
 }

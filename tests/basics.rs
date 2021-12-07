@@ -10,71 +10,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[macro_use] extern crate lazy_static;
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate log;
 
 #[cfg(test)]
 mod test {
-    use bytes::{
-	Bytes,
-	BytesMut
-    };
-    use env_logger;
+    use bytes::{Bytes, BytesMut};
+
     use rand::{
+        distributions::{Range, Sample},
         thread_rng,
-        distributions::{
-            Sample,
-            Range,
-        },
     };
     use rusty_rakoon::*;
     use std::{
         self,
-        collections::{
-            BTreeMap,
-            HashSet
-        },
-        fmt::{
-            Display,
-        },
-        fs::{
-            File,
-        },
-        io::{
-            BufWriter,
-            Write,
-        },
-        os::unix,
-        path::{
-            Path,
-            PathBuf,
-        },
-        rc::{
-            Rc,
-        },
+        collections::{BTreeMap, HashSet},
+        fmt::Display,
+        fs::File,
+        io::{BufWriter, Write},
+        path::{Path, PathBuf},
+        rc::Rc,
         str,
-        sync::{
-            Arc,
-            Mutex,
-        },
-        time::{
-            Duration,
-        },
+        sync::{Arc, Mutex},
+        time::Duration,
     };
 
-    use uuid;
-
-    fn get_env_or_default<T: str::FromStr + Clone>(name : &str, default : &T) -> T {
+    fn get_env_or_default<T: str::FromStr + Clone>(name: &str, default: &T) -> T {
         if let Some(s) = std::env::var_os(name) {
             if let Ok(v) = s.to_str().unwrap().parse::<T>() {
-                return v
+                return v;
             }
         }
 
         default.clone()
     }
 
-    fn hostname() ->&'static str {
+    fn hostname() -> &'static str {
         "127.0.0.1"
     }
 
@@ -85,8 +58,10 @@ mod test {
 
     impl PortAllocator {
         fn new(port_base: u16) -> Self {
-            PortAllocator{next_port: port_base,
-                          cache: HashSet::<u16>::new()}
+            PortAllocator {
+                next_port: port_base,
+                cache: HashSet::<u16>::new(),
+            }
         }
 
         fn get(&mut self) -> u16 {
@@ -108,8 +83,7 @@ mod test {
 
     lazy_static! {
         static ref PORT_ALLOCATOR: Arc<Mutex<PortAllocator>> = {
-            let port_base = get_env_or_default("ARAKOON_PORT_BASE",
-                                               &17_000);
+            let port_base = get_env_or_default("ARAKOON_PORT_BASE", &17_000);
             Arc::new(Mutex::new(PortAllocator::new(port_base)))
         };
     }
@@ -145,21 +119,20 @@ mod test {
     }
 
     impl ArakoonNode {
-        fn new(node_id : &NodeId,
-               root : &PathBuf,
-               binary : &PathBuf) -> ArakoonNode {
-            let home = ArakoonNode::node_home(root,
-                                              node_id);
+        fn new(node_id: &NodeId, root: &Path, binary: &Path) -> ArakoonNode {
+            let home = ArakoonNode::node_home(root, node_id);
             std::fs::create_dir_all(&home).unwrap();
-            ArakoonNode {node_id: node_id.clone(),
-                         client_port: Port::new(),
-                         messaging_port: Port::new(),
-                         home,
-                         binary : binary.clone(),
-                         child : None }
+            ArakoonNode {
+                node_id: node_id.clone(),
+                client_port: Port::new(),
+                messaging_port: Port::new(),
+                home,
+                binary: binary.to_path_buf(),
+                child: None,
+            }
         }
 
-        fn node_home(root : &PathBuf, node_id : &NodeId) -> PathBuf {
+        fn node_home(root: &Path, node_id: &NodeId) -> PathBuf {
             root.join(&node_id.to_string())
         }
 
@@ -172,27 +145,26 @@ mod test {
         }
 
         fn config(&self) -> NodeConfig {
-            NodeConfig::new(self.node_id.clone(),
-                            &self.address()).expect("fix yer test")
+            NodeConfig::new(self.node_id.clone(), &self.address()).expect("fix yer test")
         }
 
-        fn wait_for_service(&self, retries : usize) -> () {
+        fn wait_for_service(&self, retries: usize) {
             for i in 0..(retries + 1) {
                 let res = std::net::TcpStream::connect(&self.address() as &str);
                 match res {
                     Ok(_) => {
-                        info!("{} found running after {} retries",
-                              self.node_id,
-                              i);
-                        return ();
-                    },
-                    Err(e) => if i == retries {
-                        panic!("{} still not found running after {} retries: {}",
-                               self.node_id,
-                               i,
-                               e);
-                    } else {
-                        std::thread::sleep(std::time::Duration::new(1, 0));
+                        info!("{} found running after {} retries", self.node_id, i);
+                        return;
+                    }
+                    Err(e) => {
+                        if i == retries {
+                            panic!(
+                                "{} still not found running after {} retries: {}",
+                                self.node_id, i, e
+                            );
+                        } else {
+                            std::thread::sleep(std::time::Duration::new(1, 0));
+                        }
                     }
                 }
             }
@@ -207,14 +179,14 @@ mod test {
                     .arg(self.config_file())
                     .spawn()
                     .unwrap_or_else(|e| {
-                        panic!("failed to fork off {} as {}: {}",
-                               self.binary.to_str().unwrap(),
-                               self.node_id,
-                               e)
+                        panic!(
+                            "failed to fork off {} as {}: {}",
+                            self.binary.to_str().unwrap(),
+                            self.node_id,
+                            e
+                        )
                     });
-                info!("forked off process for {}: {}",
-                      self.node_id,
-                      c.id());
+                info!("forked off process for {}: {}", self.node_id, c.id());
                 self.child = Some(c);
             } else {
                 panic!("{} is already running!", self.node_id)
@@ -240,44 +212,45 @@ mod test {
     }
 
     pub struct ArakoonCluster {
-        cluster_id : ClusterId,
-        home : PathBuf,
-        nodes : BTreeMap<NodeId, ArakoonNode>,
+        cluster_id: ClusterId,
+        home: PathBuf,
+        nodes: BTreeMap<NodeId, ArakoonNode>,
     }
 
     impl ArakoonCluster {
-        fn new(count : u16) -> ArakoonCluster {
-            let tempdir = get_env_or_default("TEMP",
-                                             &"/tmp".to_owned());
-            let binary = get_env_or_default("ARAKOON_BINARY",
-                                            &"/usr/bin/arakoon".to_owned());
+        fn new(count: u16) -> ArakoonCluster {
+            let tempdir = get_env_or_default("TEMP", &"/tmp".to_owned());
+            let binary = get_env_or_default("ARAKOON_BINARY", &"/usr/bin/arakoon".to_owned());
 
             let cluster_id = ClusterId(uuid::Uuid::new_v4().hyphenated().to_string());
-            let home = Path::new(&tempdir).join("RustyRakoonTest").join(&cluster_id.to_string());
+            let home = Path::new(&tempdir)
+                .join("RustyRakoonTest")
+                .join(&cluster_id.to_string());
 
-            info!("setting up arakoon cluster {:?}: {} node(s), home={}, binary={}",
-                  cluster_id,
-                  count,
-                  home.display(),
-                  binary);
+            info!(
+                "setting up arakoon cluster {:?}: {} node(s), home={}, binary={}",
+                cluster_id,
+                count,
+                home.display(),
+                binary
+            );
 
             if home.exists() {
                 std::fs::remove_dir_all(&home).expect("failed to remove test directory");
             }
 
-            let mut cluster = ArakoonCluster{cluster_id: cluster_id.clone(),
-                                             home,
-                                             nodes: BTreeMap::new()};
+            let mut cluster = ArakoonCluster {
+                cluster_id,
+                home,
+                nodes: BTreeMap::new(),
+            };
 
             std::fs::create_dir_all(&cluster.home).expect("failed to create test directory");
 
             for i in 0..count {
                 let node_id = NodeId("node_".to_owned() + &i.to_string());
-                let node = ArakoonNode::new(&node_id,
-                                            &cluster.home,
-                                            &PathBuf::from(&binary));
-                cluster.nodes.insert(node_id,
-                                     node);
+                let node = ArakoonNode::new(&node_id, &cluster.home, &PathBuf::from(&binary));
+                cluster.nodes.insert(node_id, node);
             }
 
             for node in cluster.nodes.values() {
@@ -295,7 +268,7 @@ mod test {
             cluster
         }
 
-        fn write_config_file(&self, node : &ArakoonNode) -> std::io::Result<()> {
+        fn write_config_file(&self, node: &ArakoonNode) -> std::io::Result<()> {
             let f = File::create(node.config_file())?;
             let mut w = BufWriter::new(f);
 
@@ -312,12 +285,12 @@ mod test {
                 }
                 write!(w, "{}", node.node_id)?
             }
-            writeln!(w, "")?;
+            writeln!(w)?;
 
             let (_, master) = self.nodes.iter().next().unwrap();
             writeln!(w, "master = {}", master.node_id)?;
             writeln!(w, "preferred_master = true")?;
-            writeln!(w, "")?;
+            writeln!(w)?;
 
             for node in self.nodes.values() {
                 writeln!(w, "[{}]", node.node_id)?;
@@ -351,28 +324,34 @@ mod test {
     }
 
     // TODO: convert this to a method on Node
-    async fn determine_master(node: &mut Node,
-                              wait_secs: u32) -> std::result::Result<NodeId, Error>
-    {
+    async fn determine_master(
+        node: &mut Node,
+        wait_secs: u32,
+    ) -> std::result::Result<NodeId, Error> {
         for i in 0..wait_secs {
             let res = node.who_master().await?;
             if let Some(node_id) = res {
                 info!("master is {}", node_id);
                 return Ok(node_id);
             } else {
-                info!("no master yet, attempt {}, wait_secs {} -> going to sleep",
-                      i, wait_secs);
+                info!(
+                    "no master yet, attempt {}, wait_secs {} -> going to sleep",
+                    i, wait_secs
+                );
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
 
-        Err(Error::IoError(std::io::Error::new(std::io::ErrorKind::Other,
-                                               "no master available")))
+        Err(Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "no master available",
+        )))
     }
 
-    async fn connect_to_master(cluster: Rc<ArakoonCluster>,
-                               wait_secs: u32) -> std::result::Result<Node, Error>
-    {
+    async fn connect_to_master(
+        cluster: Rc<ArakoonCluster>,
+        wait_secs: u32,
+    ) -> std::result::Result<Node, Error> {
         let node_configs = cluster.node_configs().clone();
         assert!(!node_configs.is_empty());
 
@@ -382,33 +361,29 @@ mod test {
         let idx = range.sample(&mut rng);
 
         debug!("connecting to {}", node_configs[idx].node_id);
-        let mut node = Node::connect(cluster.cluster_id.clone(),
-                                     &node_configs[idx]).await?;
-        let master_id = determine_master(&mut node,
-                                         wait_secs).await?;
+        let mut node = Node::connect(cluster.cluster_id.clone(), &node_configs[idx]).await?;
+        let master_id = determine_master(&mut node, wait_secs).await?;
         debug!("master is {}", master_id);
         if node_configs[idx].node_id == master_id {
             Ok(node)
         } else {
-            let maybe_ncfg = node_configs.iter().find(|cfg|
-                                                      {
-                                                          cfg.node_id == master_id
-                                                      });
+            let maybe_ncfg = node_configs.iter().find(|cfg| cfg.node_id == master_id);
             if let Some(node_config) = maybe_ncfg {
                 debug!("re-connecting to {}", node_config.node_id);
-                let node = Node::connect(cluster.cluster_id.clone(),
-                                      node_config).await?;
+                let node = Node::connect(cluster.cluster_id.clone(), node_config).await?;
                 Ok(node)
             } else {
-                let e = std::io::Error::new(std::io::ErrorKind::Other,
-                                            "master not found in cluster config");
+                let e = std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "master not found in cluster config",
+                );
                 Err(Error::from(e))
             }
         }
     }
 
     struct Fixture {
-        cluster: Rc<ArakoonCluster>
+        cluster: Rc<ArakoonCluster>,
     }
 
     impl Fixture {
@@ -416,7 +391,7 @@ mod test {
             // ignore errors caused by multiple invocations
             drop(env_logger::try_init());
             Fixture {
-                cluster: Rc::new(ArakoonCluster::new(num_nodes))
+                cluster: Rc::new(ArakoonCluster::new(num_nodes)),
             }
         }
 
@@ -438,12 +413,12 @@ mod test {
         let cluster = &fixture.cluster;
         let node_configs = &cluster.node_configs();
         assert!(!node_configs.is_empty());
-        let mut client = Node::connect(cluster.cluster_id.clone(),
-                                       &node_configs[0]).await.unwrap();
+        let mut client = Node::connect(cluster.cluster_id.clone(), &node_configs[0])
+            .await
+            .unwrap();
 
         let res = determine_master(&mut client, 30).await;
-        assert_eq!(node_configs[0].node_id,
-                   res.unwrap());
+        assert_eq!(node_configs[0].node_id, res.unwrap());
     }
 
     #[tokio::test]
@@ -453,8 +428,7 @@ mod test {
         let node_configs = &cluster.node_configs();
         assert!(!node_configs.is_empty());
         let res = connect_to_master(cluster, 30).await;
-        assert_eq!(node_configs[0].node_id,
-                   res.unwrap().node_id);
+        assert_eq!(node_configs[0].node_id, res.unwrap().node_id);
     }
 
     #[tokio::test]
@@ -463,8 +437,7 @@ mod test {
         let cluster = fixture.cluster.clone();
         let node_configs = &cluster.node_configs();
         assert!(!node_configs.is_empty());
-        let mut client = Node::connect(cluster.cluster_id.clone(),
-                                       &node_configs[0])
+        let mut client = Node::connect(cluster.cluster_id.clone(), &node_configs[0])
             .await
             .unwrap();
         let res = client.hello().await;
@@ -478,7 +451,7 @@ mod test {
         let mut master = fixture.connect_to_master().await;
         let key = Bytes::from(&b"key"[..]);
         let res = master.exists(Consistency::Consistent, &key).await.unwrap();
-        assert_eq!(false, res);
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -488,13 +461,13 @@ mod test {
         let key = Bytes::from(&b"key"[..]);
         let res = master.get(Consistency::Consistent, &key).await;
         match res {
-            Ok(_) => panic!("'get' returned something for an inexistent key: {:?}",
-                            res),
+            Ok(_) => panic!("'get' returned something for an inexistent key: {:?}", res),
             Err(e) => match e {
-                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                            code),
-                _ => panic!("'get' for inexistent key yielded unexpected error response {:?}",
-                            e),
+                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound, code),
+                _ => panic!(
+                    "'get' for inexistent key yielded unexpected error response {:?}",
+                    e
+                ),
             },
         }
     }
@@ -506,12 +479,16 @@ mod test {
         let key = Bytes::from(&b"key"[..]);
         let res = master.delete(&key).await;
         match res {
-            Ok(_) => panic!("'delete' returned successfully for an inexistent key: {:?}", res),
+            Ok(_) => panic!(
+                "'delete' returned successfully for an inexistent key: {:?}",
+                res
+            ),
             Err(e) => match e {
-                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound,
-                                                            code),
-                _ => panic!("'delete' for inexistent key yielded unexpected error response {:?}",
-                            e),
+                Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::NotFound, code),
+                _ => panic!(
+                    "'delete' for inexistent key yielded unexpected error response {:?}",
+                    e
+                ),
             },
         }
     }
@@ -522,11 +499,9 @@ mod test {
         let mut master = fixture.connect_to_master().await;
         let key = Bytes::from(&b"key"[..]);
         let val = Bytes::from(&b"val"[..]);
-        master
-            .set(&key, &val)
-            .await
-            .expect("'set' returned error");
-        let res = master.get(Consistency::Consistent, &key)
+        master.set(&key, &val).await.expect("'set' returned error");
+        let res = master
+            .get(Consistency::Consistent, &key)
             .await
             .expect("'get' returned error");
         assert_eq!(val, res);
@@ -543,7 +518,7 @@ mod test {
             .exists(Consistency::Consistent, &key)
             .await
             .expect("'exists' returned error");
-        assert_eq!(true, res);
+        assert!(res);
     }
 
     #[tokio::test]
@@ -554,8 +529,11 @@ mod test {
         let val = Bytes::from(&b"val"[..]);
         master.set(&key, &val).await.expect("'set' returned error");
         master.delete(&key).await.expect("'delete' returned error");
-        let res = master.exists(Consistency::Consistent, &key).await.expect("'exists' returned error");
-        assert_eq!(false, res);
+        let res = master
+            .exists(Consistency::Consistent, &key)
+            .await
+            .expect("'exists' returned error");
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -571,10 +549,11 @@ mod test {
             .await
             .expect("'test_and_set' for inexistent key yielded error");
         assert_eq!(None, res);
-        let res = master.exists(Consistency::Consistent, &key)
+        let res = master
+            .exists(Consistency::Consistent, &key)
             .await
             .expect("'exists' returned error for inexistent key");
-        assert_eq!(false, res);
+        assert!(!res);
     }
 
     #[tokio::test]
@@ -605,10 +584,7 @@ mod test {
         let old = Bytes::from(&b"old"[..]);
         let new = Bytes::from(&b"new"[..]);
 
-        master
-            .set(&key, &old)
-            .await
-            .expect("'set' failed");
+        master.set(&key, &old).await.expect("'set' failed");
 
         let res = master
             .test_and_set(&key, Some(&old), Some(&new))
@@ -633,9 +609,7 @@ mod test {
         let real_old = Bytes::from(&b"real_old"[..]);
         let new = Bytes::from(&b"new"[..]);
 
-        master.set(&key, &real_old)
-            .await
-            .expect("'set' failed");
+        master.set(&key, &real_old).await.expect("'set' failed");
 
         let res = master
             .test_and_set(&key, Some(&exp_old), Some(&new))
@@ -657,12 +631,11 @@ mod test {
         let fixture = Fixture::new(3);
         let mut master = fixture.connect_to_master().await;
         let key = Bytes::from(&b"key"[..]);
-        let res = master.sequence(&[Action::AssertExists{key}]).await;
-        assert_eq!(true, res.is_err());
+        let res = master.sequence(&[Action::AssertExists { key }]).await;
+        assert!(res.is_err());
         let err = res.err().unwrap();
         match err {
-            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                        code),
+            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed, code),
             _ => panic!("sequence yielded unexpected error {}", err),
         }
     }
@@ -675,7 +648,7 @@ mod test {
         let val = Bytes::from(&b"val"[..]);
         master.set(&key, &val).await.expect("'set' failed");
         master
-            .sequence(&[Action::AssertExists{key}])
+            .sequence(&[Action::AssertExists { key }])
             .await
             .expect("Sequence[AssertExists] yielded error");
     }
@@ -687,14 +660,21 @@ mod test {
         let key = Bytes::from(&b"key"[..]);
         let val = Bytes::from(&b"val"[..]);
         let res = master
-            .sequence(&[Action::Assert{key: key.clone(), value: Some(val.clone())},
-                        Action::Set{key: key.clone(), value: val.clone()}])
+            .sequence(&[
+                Action::Assert {
+                    key: key.clone(),
+                    value: Some(val.clone()),
+                },
+                Action::Set {
+                    key: key.clone(),
+                    value: val.clone(),
+                },
+            ])
             .await;
-        assert_eq!(true, res.is_err());
+        assert!(res.is_err());
         let err = res.err().unwrap();
         match err {
-            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed,
-                                                        code),
+            Error::ErrorResponse(code, _) => assert_eq!(ErrorCode::AssertionFailed, code),
             _ => panic!("sequence yielded unexpected error {}", err),
         }
     }
@@ -706,8 +686,16 @@ mod test {
         let key = Bytes::from(&b"key"[..]);
         let val = Bytes::from(&b"val"[..]);
         master
-            .sequence(&[Action::Assert{key: key.clone(), value: None},
-                        Action::Set{key: key.clone(), value: val.clone()}])
+            .sequence(&[
+                Action::Assert {
+                    key: key.clone(),
+                    value: None,
+                },
+                Action::Set {
+                    key: key.clone(),
+                    value: val.clone(),
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
@@ -728,8 +716,16 @@ mod test {
         let val2 = Bytes::from(&b"val2"[..]);
 
         master
-            .sequence(&[Action::Set{key: key1, value: val1},
-                        Action::Set{key: key2, value: val2}])
+            .sequence(&[
+                Action::Set {
+                    key: key1,
+                    value: val1,
+                },
+                Action::Set {
+                    key: key2,
+                    value: val2,
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
@@ -757,8 +753,16 @@ mod test {
         let val2 = Bytes::from(&b"val2"[..]);
 
         master
-            .sequence(&[Action::Set{key: key1.clone(), value: val1.clone()},
-                        Action::Set{key: key2.clone(), value: val2.clone()}])
+            .sequence(&[
+                Action::Set {
+                    key: key1.clone(),
+                    value: val1.clone(),
+                },
+                Action::Set {
+                    key: key2.clone(),
+                    value: val2.clone(),
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
@@ -795,18 +799,21 @@ mod test {
         let val2 = Bytes::from(&b"val2"[..]);
 
         master
-            .sequence(&[Action::Set{key: key1.clone(), value: val1.clone()},
-                        Action::Set{key: key2.clone(), value: val2.clone()}])
+            .sequence(&[
+                Action::Set {
+                    key: key1.clone(),
+                    value: val1.clone(),
+                },
+                Action::Set {
+                    key: key2.clone(),
+                    value: val2.clone(),
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
         let vec = master
-            .range(Consistency::Consistent,
-                   Some(&key1),
-                   true,
-                   None,
-                   true,
-                   100)
+            .range(Consistency::Consistent, Some(&key1), true, None, true, 100)
             .await
             .expect("'range' failed");
 
@@ -825,23 +832,26 @@ mod test {
         let val2 = Bytes::from(&b"val2"[..]);
 
         master
-            .sequence(&[Action::Set{key: key1.clone(), value: val1.clone()},
-                        Action::Set{key: key2.clone(), value: val2.clone()}])
+            .sequence(&[
+                Action::Set {
+                    key: key1.clone(),
+                    value: val1.clone(),
+                },
+                Action::Set {
+                    key: key2.clone(),
+                    value: val2.clone(),
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
         let vec: Vec<(Bytes, Bytes)> = master
-            .range_entries(Consistency::Consistent,
-                           None,
-                           true,
-                           Some(&key2),
-                           true,
-                           100)
+            .range_entries(Consistency::Consistent, None, true, Some(&key2), true, 100)
             .await
             .expect("'range_entries' failed")
-	    .into_iter()
-	    .map(|(k, v)| { (k.freeze(), v.freeze()) })
-	    .collect();
+            .into_iter()
+            .map(|(k, v)| (k.freeze(), v.freeze()))
+            .collect();
 
         assert_eq!(2, vec.len());
         assert_eq!((key1, val1), vec[0]);
@@ -858,8 +868,16 @@ mod test {
         let val2 = Bytes::from(&b"val2"[..]);
 
         master
-            .sequence(&[Action::Set{key: key1, value: val1},
-                        Action::Set{key: key2, value: val2}])
+            .sequence(&[
+                Action::Set {
+                    key: key1,
+                    value: val1,
+                },
+                Action::Set {
+                    key: key2,
+                    value: val2,
+                },
+            ])
             .await
             .expect("'sequence' failed");
 
@@ -876,6 +894,6 @@ mod test {
             .await
             .expect("'prefix_keys' failed");
 
-        assert_eq!(true, vec.is_empty());
+        assert!(vec.is_empty());
     }
 }
